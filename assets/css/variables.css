@@ -1,0 +1,130 @@
+/* ==========================================================================
+   Design tokens — derived from docs/genesis-DESIGN.md
+   Light theme only. Every color is a variable so a dark block can be added
+   later without touching component CSS.
+   ========================================================================== */
+
+:root {
+  /* ---- Color: brand ---- */
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-soft: #eef2ff;
+  --color-primary-border: #c7d2fe;
+
+  /* ---- Color: surfaces ---- */
+  --color-bg: #fafafa;
+  --color-bg-alt: #f4f4f6;
+  --color-surface: #ffffff;
+  --color-overlay: rgba(10, 10, 10, 0.45);
+
+  /* ---- Color: text ---- */
+  --color-text: #0a0a0a;
+  --color-text-secondary: #6b6b6b;
+  --color-muted: #9c9c9c;
+  --color-text-inverse: #ffffff;
+
+  /* ---- Color: lines ---- */
+  --color-border: #e8e8ec;
+  --color-border-strong: #d6d6dd;
+
+  /* ---- Color: semantic ---- */
+  --color-success: #10b981;
+  --color-success-soft: #ecfdf5;
+  --color-success-text: #047857;
+
+  --color-warning: #f59e0b;
+  --color-warning-soft: #fffbeb;
+  --color-warning-text: #b45309;
+
+  --color-error: #ef4444;
+  --color-error-soft: #fef2f2;
+  --color-error-text: #b91c1c;
+
+  --color-info: #6366f1;
+  --color-info-soft: #eef2ff;
+  --color-info-text: #4338ca;
+
+  /* ---- Typography ---- */
+  --font-ar: "Noto Sans Arabic", "Segoe UI", Tahoma, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Courier New", monospace;
+
+  /* Auth hero only */
+  --fs-display: 3.5rem;   /* 56px, clamped up to 72 on wide screens */
+  --fs-headline: 2.5rem;  /* 40px */
+  /* In-app scale */
+  --fs-h1: 1.75rem;       /* 28px */
+  --fs-h2: 1.375rem;      /* 22px */
+  --fs-h3: 1.125rem;      /* 18px */
+  --fs-body: 0.9375rem;   /* 15px */
+  --fs-sm: 0.8125rem;     /* 13px */
+  --fs-xs: 0.75rem;       /* 12px */
+  --fs-overline: 0.6875rem; /* 11px */
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-bold: 700;
+
+  --lh-tight: 1.25;
+  --lh-normal: 1.6;
+  --ls-tight: -0.02em;
+
+  /* ---- Spacing: 4px grid ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+  --space-12: 96px;
+
+  /* ---- Radius ---- */
+  --radius-sm: 4px;   /* chips, badges */
+  --radius-md: 6px;   /* buttons, inputs */
+  --radius-lg: 8px;   /* panels, dropdowns */
+  --radius-xl: 12px;  /* cards */
+  --radius-full: 9999px;
+
+  /* ---- Elevation (hover/focus only, never static) ---- */
+  --shadow-hover: 0 8px 30px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --shadow-primary: 0 4px 12px rgba(99, 102, 241, 0.35);
+  --focus-ring: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  --focus-ring-error: 0 0 0 3px rgba(239, 68, 68, 0.12);
+
+  /* ---- Motion ---- */
+  --t-fast: 120ms ease;
+  --t-base: 200ms ease;
+
+  /* ---- Layout ---- */
+  --sidebar-w: 264px;
+  --header-h: 60px;
+  --bottomnav-h: 64px;
+  --container-max: 1280px;
+  --touch-min: 44px;
+
+  /* ---- Control heights ---- */
+  --control-sm: 32px;
+  --control-md: 38px;
+  --control-lg: 44px;
+
+  --z-header: 40;
+  --z-sidebar: 50;
+  --z-drawer: 60;
+  --z-dropdown: 70;
+  --z-modal: 80;
+  --z-toast: 90;
+}
+
+@media (max-width: 767px) {
+  :root {
+    /* Comfortable touch sizing on phones */
+    --control-sm: 36px;
+    --control-md: var(--touch-min);
+    --control-lg: 48px;
+  }
+}

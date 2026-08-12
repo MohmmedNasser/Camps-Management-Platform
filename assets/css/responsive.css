@@ -1,0 +1,311 @@
+/* ==========================================================================
+   Responsive escalation
+   Base styles are mobile (320px+). Everything here is a progressive upgrade.
+   Breakpoints: 480 / 768 / 1024 / 1280
+   ========================================================================== */
+
+/* ---- >= 480px : large phones ----------------------------------------- */
+
+@media (min-width: 480px) {
+  .form-actions,
+  .form-sticky {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+  .form-actions .btn,
+  .form-sticky .btn {
+    width: auto;
+    min-width: 140px;
+  }
+
+  .modal__foot .btn {
+    flex: 0 1 auto;
+    min-width: 120px;
+  }
+
+  .modal__foot {
+    justify-content: flex-end;
+  }
+
+  .grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---- >= 768px : tablets ---------------------------------------------- */
+
+@media (min-width: 768px) {
+  .container {
+    padding-inline: var(--space-6);
+  }
+
+  .page {
+    padding-block: var(--space-7);
+  }
+
+  .page-header {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+
+  .page-header__actions {
+    flex-shrink: 0;
+  }
+
+  .grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid--3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .field-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .radio-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .card-grid--wide {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .toolbar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .toolbar__row {
+    flex: 1;
+    max-width: 520px;
+  }
+
+  /* Modal becomes a centered dialog */
+  .modal-root {
+    place-items: center;
+    padding: var(--space-6);
+  }
+
+  .modal {
+    max-width: 520px;
+    max-height: 85vh;
+    border-radius: var(--radius-xl);
+    transform: translateY(8px) scale(0.98);
+  }
+
+  .modal-root[data-open="true"] .modal {
+    transform: translateY(0) scale(1);
+  }
+
+  .modal--lg {
+    max-width: 720px;
+  }
+
+  .modal__foot {
+    padding-bottom: var(--space-4);
+  }
+
+  .toast-region {
+    inset-inline: auto var(--space-6);
+    bottom: var(--space-6);
+    width: min(380px, calc(100vw - var(--space-9)));
+  }
+
+  .form-sticky {
+    position: static;
+    margin-inline: 0;
+    padding: var(--space-2) 0 0;
+    background: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-top: 0;
+  }
+
+  .auth__body {
+    padding: var(--space-9) var(--space-6);
+  }
+
+  .stat__value {
+    font-size: 1.75rem;
+  }
+}
+
+/* ---- >= 1024px : desktop, sidebar becomes permanent ------------------ */
+
+@media (min-width: 1024px) {
+  .app-sidebar {
+    transform: none;
+    width: var(--sidebar-w);
+    z-index: var(--z-sidebar);
+  }
+
+  .app-sidebar__close,
+  .app-header__menu {
+    display: none;
+  }
+
+  .app-header {
+    padding-inline: var(--space-6);
+  }
+
+  .app-body {
+    margin-inline-start: var(--sidebar-w);
+  }
+
+  .app-main {
+    padding-bottom: var(--space-9);
+  }
+
+  .bottom-nav {
+    display: none;
+  }
+
+  .scrim {
+    display: none;
+  }
+
+  .toast-region {
+    bottom: var(--space-6);
+  }
+
+  .grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .card-grid--wide { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  .field-grid--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .filters {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .filters__actions {
+    grid-column: auto;
+    align-items: flex-end;
+    justify-content: flex-end;
+  }
+
+  /* Two-column detail layout */
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: var(--space-6);
+    align-items: start;
+  }
+
+  .split--reverse {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+
+  .split__aside {
+    position: sticky;
+    top: calc(var(--header-h) + var(--space-6));
+  }
+
+  /* Auth gets a brand panel */
+  .auth {
+    flex-direction: row;
+  }
+
+  .auth__aside {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 42%;
+    max-width: 560px;
+    padding: var(--space-9);
+    background: var(--color-primary);
+    color: #fff;
+  }
+
+  .auth__aside-title {
+    font-size: var(--fs-headline);
+    color: #fff;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+  }
+
+  .auth__aside-text {
+    margin-top: var(--space-5);
+    max-width: 44ch;
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 1.0625rem;
+    line-height: 1.7;
+  }
+
+  .auth__aside .brand__name,
+  .auth__aside .brand__sub {
+    color: #fff;
+  }
+
+  .auth__aside .brand__sub {
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .auth__aside .brand__mark {
+    background: rgba(255, 255, 255, 0.16);
+  }
+
+  .auth__aside-points {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-top: var(--space-7);
+  }
+
+  .auth__aside-point {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--fs-body);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .auth__brand {
+    display: none;
+  }
+
+  .auth__title {
+    text-align: start;
+    font-size: 2rem;
+  }
+
+  .auth__subtitle,
+  .auth__foot {
+    text-align: start;
+  }
+
+  .auth__inner {
+    max-width: 420px;
+    margin-inline: auto;
+  }
+}
+
+/* ---- >= 1280px : wide desktop ---------------------------------------- */
+
+@media (min-width: 1280px) {
+  .container {
+    padding-inline: var(--space-7);
+  }
+
+  .split {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+
+  .auth__aside-title {
+    font-size: 3rem;
+  }
+}

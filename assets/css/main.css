@@ -1,0 +1,15 @@
+/* ==========================================================================
+   منصة إدارة مخيمات النازحين — single stylesheet entry point.
+   Pages link only this file. Import order matters: tokens → base → layout
+   → components → variants → responsive escalation last.
+   ========================================================================== */
+
+@import url("./variables.css");
+@import url("./base.css");
+@import url("./layout.css");
+@import url("./components.css");
+@import url("./forms.css");
+@import url("./tables.css");
+@import url("./charts.css");
+@import url("./utilities.css");
+@import url("./responsive.css");

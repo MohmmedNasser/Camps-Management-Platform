@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="شعار منصة إدارة المخيمات">
+  <rect width="64" height="64" rx="16" fill="#6366F1"/>
+  <g fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 46 32 18"/>
+    <path d="M47 46 32 18"/>
+    <path d="M39 46 32 33l-7 13"/>
+    <path d="M14 46h36"/>
+  </g>
+</svg>

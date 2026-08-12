@@ -1,0 +1,308 @@
+/* ==========================================================================
+   Data tables
+   Mobile-first: rows render as cards below 768px, real <table> at >=768px.
+   The same markup serves both — see ui/table.js.
+   ========================================================================== */
+
+.table-wrap {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.table thead {
+  display: none;
+}
+
+.table th,
+.table td {
+  text-align: start;
+}
+
+.table th {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.table th button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: inherit;
+  font: inherit;
+  transition: color var(--t-fast);
+}
+
+.table th button:hover {
+  color: var(--color-text);
+}
+
+.table th[aria-sort] button {
+  color: var(--color-primary-hover);
+}
+
+.table th .sort-icon {
+  opacity: 0.5;
+}
+
+.table th[aria-sort] .sort-icon {
+  opacity: 1;
+}
+
+/* --- Mobile card presentation --- */
+
+.table tbody tr {
+  display: block;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.table tbody td {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-1) 0;
+  min-width: 0;
+}
+
+.table tbody td::before {
+  content: attr(data-label);
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--color-muted);
+}
+
+/* The first cell acts as the card title on mobile */
+.table tbody td[data-primary] {
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px dashed var(--color-border);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+}
+
+.table tbody td[data-primary]::before {
+  display: none;
+}
+
+.table tbody td[data-actions] {
+  justify-content: flex-start;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+  margin-top: var(--space-2);
+  border-top: 1px dashed var(--color-border);
+}
+
+.table tbody td[data-actions]::before {
+  display: none;
+}
+
+.cell-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.cell-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cell-title {
+  font-weight: var(--fw-medium);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-sub {
+  font-size: var(--fs-xs);
+  color: var(--color-muted);
+}
+
+.cell-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  direction: ltr;
+  unicode-bidi: embed;
+}
+
+.table__empty td {
+  display: block;
+  padding: 0;
+}
+
+.table__empty td::before {
+  display: none;
+}
+
+/* --- Real table from 768px --- */
+
+@media (min-width: 768px) {
+  .table thead {
+    display: table-header-group;
+  }
+
+  .table tbody tr {
+    display: table-row;
+    padding: 0;
+    transition: background var(--t-fast);
+  }
+
+  .table tbody tr:hover {
+    background: var(--color-bg);
+  }
+
+  .table tbody td {
+    display: table-cell;
+    vertical-align: middle;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .table tbody td::before {
+    display: none;
+  }
+
+  .table tbody td[data-primary] {
+    padding: var(--space-3) var(--space-4);
+    margin: 0;
+    border-bottom: 1px solid var(--color-border);
+    font-size: var(--fs-sm);
+  }
+
+  .table tbody td[data-actions] {
+    padding: var(--space-2) var(--space-4);
+    margin: 0;
+    border-top: 0;
+    border-bottom: 1px solid var(--color-border);
+    text-align: end;
+  }
+
+  .table tbody td[data-actions] .cell-actions {
+    justify-content: flex-end;
+  }
+
+  .table__empty td {
+    display: table-cell;
+  }
+}
+
+/* ---- Data grid of cards (used where a table is the wrong shape) ------- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+}
+
+.record-card {
+  display: block;
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  transition: transform var(--t-base), box-shadow var(--t-base), border-color var(--t-base);
+}
+
+a.record-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+  border-color: var(--color-border-strong);
+  text-decoration: none;
+}
+
+.record-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.record-card__title {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  color: var(--color-text);
+}
+
+.record-card__sub {
+  margin-top: 2px;
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.record-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.record-card__meta dt {
+  font-size: var(--fs-xs);
+  color: var(--color-muted);
+}
+
+.record-card__meta dd {
+  margin: 0;
+  color: var(--color-text);
+}
+
+.record-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+}
+
+/* ---- Result count row ------------------------------------------------ */
+
+.result-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.result-bar__count strong {
+  font-family: var(--font-mono);
+  color: var(--color-text);
+}
