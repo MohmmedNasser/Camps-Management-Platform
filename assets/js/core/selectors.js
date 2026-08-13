@@ -7,8 +7,20 @@
  */
 
 import * as store from './store.js';
-import { ROLES, STATUS, AID_TYPES, labelOf, GENDERS } from './config.js';
-import { nextFamilySequence } from '../utils/format.js';
+import {
+  ROLES,
+  STATUS,
+  AID_TYPES,
+  labelOf,
+  GENDERS,
+  GOVERNORATES,
+  WORK_STATUSES,
+  TENT_TYPES,
+  DOCUMENT_CATEGORIES,
+  MESSAGE_SUBJECTS,
+  RELATIONSHIPS,
+} from './config.js';
+import { nextFamilySequence, ageFrom } from '../utils/format.js';
 
 /* ---- Lookups ----------------------------------------------------------- */
 
@@ -86,6 +98,28 @@ export function familiesWithStats(predicate) {
 export function familyOfPerson(displacedId) {
   const person = store.displaced.get(displacedId);
   return person && person.familyId ? familyWithStats(person.familyId) : null;
+}
+
+/** Search families by id, head name or notes. */
+export function searchFamilies({ query = '', campId = '', size = '', scope = () => true } = {}) {
+  const term = query.trim().toLowerCase();
+
+  return store.families
+    .list(scope)
+    .map((family) => familyWithStats(family.id))
+    .filter((family) => {
+      if (campId && family.campId !== campId) return false;
+      if (size === 'small' && family.membersCount > 3) return false;
+      if (size === 'medium' && (family.membersCount < 4 || family.membersCount > 6)) return false;
+      if (size === 'large' && family.membersCount < 7) return false;
+      if (!term) return true;
+      return (
+        family.id.toLowerCase().includes(term) ||
+        family.headName.toLowerCase().includes(term) ||
+        (family.notes || '').toLowerCase().includes(term)
+      );
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** Next auto-generated family ID, e.g. FAM-000009. */
@@ -232,12 +266,408 @@ export function aidForPerson(displacedId) {
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
+/* ---- Option lists for selects -------------------------------------------- */
+
+/** Camps as `{value,label}`; a Camp Admin only ever gets their own. */
+export function campOptions(session = null, { activeOnly = false } = {}) {
+  return store.camps
+    .list((camp) => {
+      if (activeOnly && camp.status !== STATUS.ACTIVE) return false;
+      if (session && session.role === ROLES.CAMP_ADMIN) return camp.id === session.campId;
+      return true;
+    })
+    .map((camp) => ({ value: camp.id, label: `${camp.name} — ${camp.city}` }));
+}
+
+export function familyOptions(campId = '') {
+  return store.families
+    .list((family) => !campId || family.campId === campId)
+    .map((family) => {
+      const head = store.displaced.get(family.headId);
+      return { value: family.id, label: `${family.id} — ${head ? head.fullName : 'بدون رب أسرة'}` };
+    })
+    .sort((a, b) => a.value.localeCompare(b.value));
+}
+
+export function personOptions({ campId = '', familyId = '' } = {}) {
+  return store.displaced
+    .list((person) => {
+      if (campId && person.campId !== campId) return false;
+      if (familyId && person.familyId !== familyId) return false;
+      return true;
+    })
+    .map((person) => ({
+      value: person.id,
+      label: `${person.fullName} — ${person.nationalId}`,
+    }));
+}
+
+export function organizationOptions() {
+  return store.organizations.list().map((org) => ({ value: org.id, label: org.name }));
+}
+
+/** People in a camp who can head a family: not already a head elsewhere. */
+export function familyHeadCandidates(campId, { exceptFamilyId = '' } = {}) {
+  const takenHeads = new Set(
+    store.families.list((family) => family.id !== exceptFamilyId).map((family) => family.headId)
+  );
+  return store.displaced
+    .list((person) => person.campId === campId && !takenHeads.has(person.id))
+    .map((person) => ({
+      value: person.id,
+      label: `${person.fullName} — ${person.nationalId}`,
+    }));
+}
+
+/** People in a camp not attached to any family yet. */
+export function unassignedPeople(campId) {
+  return store.displaced.list((person) => person.campId === campId && !person.familyId);
+}
+
+/* ---- Organizations ------------------------------------------------------- */
+
+/** An organisation has a name and an optional responsible person — nothing else. */
+export function organizationRow(org) {
+  const aidRows = store.aid.list((record) => record.organizationId === org.id);
+  return {
+    ...org,
+    aidCount: aidRows.length,
+    aidValue: aidRows.reduce((sum, record) => sum + Number(record.value || 0), 0),
+    familiesCount: new Set(aidRows.map((record) => record.familyId)).size,
+  };
+}
+
+export function searchOrganizations({ query = '' } = {}) {
+  const term = query.trim().toLowerCase();
+  return store.organizations
+    .list(
+      (org) =>
+        !term ||
+        org.name.toLowerCase().includes(term) ||
+        (org.responsiblePerson || '').toLowerCase().includes(term)
+    )
+    .map(organizationRow)
+    .sort((a, b) => b.aidCount - a.aidCount);
+}
+
+/** An organisation still referenced by aid records must not be deleted. */
+export function organizationInUse(organizationId) {
+  return store.aid.exists((record) => record.organizationId === organizationId);
+}
+
+/* ---- Registration requests ----------------------------------------------- */
+
+export function requestRow(request) {
+  return {
+    ...request,
+    campName: campName(request.campId),
+    reviewerName: request.reviewedBy
+      ? (store.users.get(request.reviewedBy) || {}).name || '—'
+      : '',
+  };
+}
+
+export function searchRequests({ query = '', status = '', campId = '' } = {}) {
+  const term = query.trim().toLowerCase();
+  return store.registrationRequests
+    .list((request) => {
+      if (campId && request.campId !== campId) return false;
+      if (status && request.status !== status) return false;
+      if (!term) return true;
+      return (
+        request.fullName.toLowerCase().includes(term) ||
+        (request.nationalId || '').includes(term) ||
+        (request.phone || '').includes(term) ||
+        (request.email || '').toLowerCase().includes(term)
+      );
+    })
+    .map(requestRow)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+export function requestCountsByStatus(campId = '') {
+  const rows = store.registrationRequests.list((row) => !campId || row.campId === campId);
+  return {
+    all: rows.length,
+    [STATUS.PENDING]: rows.filter((row) => row.status === STATUS.PENDING).length,
+    [STATUS.APPROVED]: rows.filter((row) => row.status === STATUS.APPROVED).length,
+    [STATUS.REJECTED]: rows.filter((row) => row.status === STATUS.REJECTED).length,
+  };
+}
+
+/* ---- Registration decisions ---------------------------------------------- */
+
+/**
+ * Approve a registration request.
+ *
+ * Approval is what turns an applicant into a record: it creates the displaced
+ * person, opens a family with them as its head (a family is an independent
+ * entity with a generated ID), activates the linked account and notifies them.
+ */
+export function approveRequest(requestId, reviewerId) {
+  const request = store.registrationRequests.get(requestId);
+  if (!request || request.status !== STATUS.PENDING) return null;
+
+  const familyId = nextFamilyId();
+
+  const person = store.displaced.create({
+    fullName: request.fullName,
+    nationalId: request.nationalId,
+    phone: request.phone,
+    email: request.email,
+    campId: request.campId,
+    familyId,
+    relationship: 'head',
+    gender: 'male',
+    maritalStatus: 'single',
+    nationality: 'palestinian',
+    tentType: 'family_tent',
+    workStatus: 'unemployed',
+    incomeSource: 'none',
+    monthlyIncome: 0,
+    chronicDiseases: '',
+    disability: '',
+    status: STATUS.APPROVED,
+    createdAt: new Date().toISOString(),
+  });
+
+  store.families.create(
+    {
+      id: familyId,
+      campId: request.campId,
+      headId: person.id,
+      notes: '',
+      createdAt: new Date().toISOString(),
+    },
+    { id: familyId }
+  );
+
+  store.registrationRequests.update(requestId, {
+    status: STATUS.APPROVED,
+    reviewedAt: new Date().toISOString(),
+    reviewedBy: reviewerId,
+    displacedId: person.id,
+  });
+
+  const user = store.users.find(
+    (row) => row.requestId === requestId || row.email === request.email
+  );
+  if (user) {
+    store.users.update(user.id, { status: STATUS.APPROVED, displacedId: person.id });
+    store.notifications.create({
+      userId: user.id,
+      type: 'success',
+      title: 'تم قبول طلب التسجيل',
+      text: `تم قبول طلبك في ${campName(request.campId)}. يمكنك الآن استكمال بياناتك.`,
+      createdAt: new Date().toISOString(),
+      read: false,
+      href: 'profile.html',
+    });
+  }
+
+  return { person, familyId };
+}
+
+/** Reject a request; the reason is shown to the applicant on their status screen. */
+export function rejectRequest(requestId, reviewerId, note = '') {
+  const request = store.registrationRequests.get(requestId);
+  if (!request || request.status !== STATUS.PENDING) return null;
+
+  store.registrationRequests.update(requestId, {
+    status: STATUS.REJECTED,
+    reviewedAt: new Date().toISOString(),
+    reviewedBy: reviewerId,
+    note,
+  });
+
+  const user = store.users.find(
+    (row) => row.requestId === requestId || row.email === request.email
+  );
+  if (user) {
+    store.users.update(user.id, { status: STATUS.REJECTED, rejectionReason: note });
+    store.notifications.create({
+      userId: user.id,
+      type: 'error',
+      title: 'تم رفض طلب التسجيل',
+      text: note || 'يمكنك مراجعة إدارة المخيم لمعرفة التفاصيل.',
+      createdAt: new Date().toISOString(),
+      read: false,
+      href: 'rejected.html',
+    });
+  }
+
+  return store.registrationRequests.get(requestId);
+}
+
 /* ---- Documents / messages / notifications ------------------------------- */
 
 export function documentsFor(session) {
   return store.documents.list(scopeFilter(session)).sort(
     (a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt)
   );
+}
+
+/** Document enriched for list views. Documents have no expiry date by design. */
+export function documentRow(row) {
+  return {
+    ...row,
+    categoryLabel: labelOf(
+      DOCUMENT_CATEGORIES.map((item) => ({ value: item.value, label: item.label })),
+      row.category
+    ),
+    categoryIcon: (DOCUMENT_CATEGORIES.find((item) => item.value === row.category) || {}).icon || 'folder',
+    personName: personName(row.displacedId),
+    campName: campName(row.campId),
+    uploaderName: (store.users.get(row.uploadedBy) || {}).name || '—',
+  };
+}
+
+export function searchDocuments({ query = '', category = '', campId = '', session = null } = {}) {
+  const term = query.trim().toLowerCase();
+  const scope = session ? scopeFilter(session) : () => true;
+
+  return store.documents
+    .list(scope)
+    .filter((row) => {
+      if (category && row.category !== category) return false;
+      if (campId && row.campId !== campId) return false;
+      if (!term) return true;
+      return (
+        row.name.toLowerCase().includes(term) ||
+        personName(row.displacedId).toLowerCase().includes(term) ||
+        (row.familyId || '').toLowerCase().includes(term)
+      );
+    })
+    .map(documentRow)
+    .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+}
+
+export function documentsByCategory(session) {
+  const rows = documentsFor(session);
+  return DOCUMENT_CATEGORIES.map((category) => ({
+    value: category.value,
+    label: category.label,
+    count: rows.filter((row) => row.category === category.value).length,
+  }));
+}
+
+export function messageRow(message) {
+  const sender = store.users.get(message.fromUserId);
+  return {
+    ...message,
+    senderName: sender ? sender.name : 'مستخدم محذوف',
+    senderEmail: sender ? sender.email : '',
+    subjectLabel: labelOf(MESSAGE_SUBJECTS, message.subject),
+    campName: campName(message.campId),
+  };
+}
+
+export function searchMessages(session, { query = '', status = '', subject = '' } = {}) {
+  const term = query.trim().toLowerCase();
+  return messagesFor(session)
+    .filter((message) => {
+      if (status && message.status !== status) return false;
+      if (subject && message.subject !== subject) return false;
+      if (!term) return true;
+      const sender = store.users.get(message.fromUserId);
+      return (
+        message.body.toLowerCase().includes(term) ||
+        labelOf(MESSAGE_SUBJECTS, message.subject).includes(term) ||
+        (sender ? sender.name.toLowerCase().includes(term) : false)
+      );
+    })
+    .map(messageRow);
+}
+
+export function messageCountsByStatus(session) {
+  const rows = messagesFor(session);
+  return {
+    all: rows.length,
+    unread: rows.filter((row) => row.status === 'unread').length,
+    read: rows.filter((row) => row.status === 'read').length,
+    replied: rows.filter((row) => row.status === 'replied').length,
+  };
+}
+
+/* ---- Camps and camp admins ----------------------------------------------- */
+
+/** Camp Admins with their camp name — the Camp Admin is the camp representative. */
+export function campAdminRows({ query = '', campId = '', status = '' } = {}) {
+  const term = query.trim().toLowerCase();
+  return store.users
+    .list((user) => user.role === ROLES.CAMP_ADMIN)
+    .filter((user) => {
+      if (campId && user.campId !== campId) return false;
+      if (status && user.status !== status) return false;
+      if (!term) return true;
+      return (
+        user.name.toLowerCase().includes(term) ||
+        user.email.toLowerCase().includes(term) ||
+        (user.phone || '').includes(term)
+      );
+    })
+    .map((user) => ({
+      ...user,
+      campName: campName(user.campId),
+      displacedCount: store.displaced.count((row) => row.campId === user.campId),
+    }));
+}
+
+/** True when a camp still holds records and therefore cannot be deleted. */
+export function campInUse(campId) {
+  return (
+    store.displaced.exists((row) => row.campId === campId) ||
+    store.families.exists((row) => row.campId === campId) ||
+    store.users.exists((row) => row.campId === campId && row.role === ROLES.CAMP_ADMIN)
+  );
+}
+
+export function campWithStats(campId) {
+  const camp = store.camps.get(campId);
+  if (!camp) return null;
+  return campBreakdown().find((row) => row.id === campId) || camp;
+}
+
+/* ---- Cascading deletes ---------------------------------------------------- */
+
+/**
+ * Remove a displaced person and everything that only exists because of them.
+ * Supabase will do this with `ON DELETE CASCADE`; the rules are the same, so
+ * they live here rather than in a page.
+ */
+export function removeDisplaced(displacedId) {
+  const person = store.displaced.get(displacedId);
+  if (!person) return false;
+
+  store.aid.removeWhere((record) => record.displacedId === displacedId);
+  store.documents.removeWhere((row) => row.displacedId === displacedId);
+
+  // A family whose head is removed loses its head; an empty family is removed.
+  store.families.list((family) => family.headId === displacedId).forEach((family) => {
+    const remaining = familyMembers(family.id).filter((member) => member.id !== displacedId);
+    if (remaining.length) store.families.update(family.id, { headId: remaining[0].id });
+    else store.families.remove(family.id);
+  });
+
+  store.users.list((user) => user.displacedId === displacedId).forEach((user) => {
+    store.users.update(user.id, { displacedId: null, status: STATUS.DISABLED });
+  });
+
+  return store.displaced.remove(displacedId);
+}
+
+/** Remove a family, detaching (not deleting) its members. */
+export function removeFamily(familyId) {
+  familyMembers(familyId).forEach((member) => {
+    store.displaced.update(member.id, { familyId: '' });
+  });
+  store.aid.removeWhere((record) => record.familyId === familyId);
+  return store.families.remove(familyId);
+}
+
+/** Remove a camp admin account. */
+export function removeCampAdmin(userId) {
+  return store.users.remove(userId);
 }
 
 export function messagesFor(session) {
@@ -364,6 +794,128 @@ export function familySizeDistribution(session) {
     if (bucket) bucket.count += 1;
   });
   return buckets;
+}
+
+/** People in scope for a session — the base of every distribution below. */
+function peopleInScope(session) {
+  return store.displaced.list(
+    session && session.role === ROLES.CAMP_ADMIN ? (row) => row.campId === session.campId : () => true
+  );
+}
+
+/** Age brackets used by the statistics page. */
+export function ageDistribution(session) {
+  const buckets = [
+    { label: 'أقل من 5 سنوات', min: 0, max: 4, count: 0 },
+    { label: '5 – 17 سنة', min: 5, max: 17, count: 0 },
+    { label: '18 – 40 سنة', min: 18, max: 40, count: 0 },
+    { label: '41 – 60 سنة', min: 41, max: 60, count: 0 },
+    { label: 'أكثر من 60 سنة', min: 61, max: 200, count: 0 },
+  ];
+  peopleInScope(session).forEach((person) => {
+    const age = ageFrom(person.birthDate);
+    if (age === null) return;
+    const bucket = buckets.find((entry) => age >= entry.min && age <= entry.max);
+    if (bucket) bucket.count += 1;
+  });
+  return buckets;
+}
+
+/** Counts for any `{value,label}` enum over a field of the person record. */
+function distributionOver(session, list, field) {
+  const people = peopleInScope(session);
+  return list
+    .map((item) => ({
+      value: item.value,
+      label: item.label,
+      count: people.filter((person) => person[field] === item.value).length,
+    }))
+    .filter((entry) => entry.count > 0);
+}
+
+export function workStatusDistribution(session) {
+  return distributionOver(session, WORK_STATUSES, 'workStatus');
+}
+
+export function tentTypeDistribution(session) {
+  return distributionOver(session, TENT_TYPES, 'tentType');
+}
+
+/** Where the people in scope were displaced from. */
+export function originDistribution(session) {
+  return distributionOver(session, GOVERNORATES, 'originGovernorate');
+}
+
+export function relationshipDistribution(session) {
+  return distributionOver(session, RELATIONSHIPS, 'relationship');
+}
+
+/** Aid record count and value per organisation, largest first. */
+export function aidByOrganization(session) {
+  const rows = store.aid.list(
+    session && session.role === ROLES.CAMP_ADMIN ? (row) => row.campId === session.campId : () => true
+  );
+  return store.organizations
+    .list()
+    .map((org) => {
+      const own = rows.filter((record) => record.organizationId === org.id);
+      return {
+        value: org.id,
+        label: org.name,
+        count: own.length,
+        total: own.reduce((sum, record) => sum + Number(record.value || 0), 0),
+      };
+    })
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count);
+}
+
+/** Aid value per month for the last `months` months. */
+export function aidValueByMonth(session, months = 8) {
+  const rows = store.aid.list(
+    session && session.role === ROLES.CAMP_ADMIN ? (row) => row.campId === session.campId : () => true
+  );
+  const buckets = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    buckets.push({ date, key: `${date.getFullYear()}-${date.getMonth()}`, value: 0 });
+  }
+  const index = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+  rows.forEach((record) => {
+    const date = new Date(record.date);
+    if (Number.isNaN(date.getTime())) return;
+    const bucket = index.get(`${date.getFullYear()}-${date.getMonth()}`);
+    if (bucket) bucket.value += Number(record.value || 0);
+  });
+  return buckets;
+}
+
+/** Families that received the most aid — used by the statistics page. */
+export function topFamiliesByAid(session, limit = 5) {
+  const rows = store.aid.list(
+    session && session.role === ROLES.CAMP_ADMIN ? (row) => row.campId === session.campId : () => true
+  );
+  const totals = new Map();
+  rows.forEach((record) => {
+    const entry = totals.get(record.familyId) || { count: 0, total: 0 };
+    entry.count += 1;
+    entry.total += Number(record.value || 0);
+    totals.set(record.familyId, entry);
+  });
+  return [...totals.entries()]
+    .map(([familyId, entry]) => {
+      const family = store.families.get(familyId);
+      const head = family ? store.displaced.get(family.headId) : null;
+      return {
+        familyId,
+        headName: head ? head.fullName : '—',
+        campName: family ? campName(family.campId) : '—',
+        ...entry,
+      };
+    })
+    .sort((a, b) => b.total - a.total)
+    .slice(0, limit);
 }
 
 /** Per-camp totals — Super Admin dashboard and statistics page. */

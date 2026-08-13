@@ -47,7 +47,8 @@ python -m http.server 3000
 │   ├── js/
 │   │   ├── core/               config · storage · store · selectors · auth · router
 │   │   ├── data/               mock-data.js — بيانات تجريبية فقط
-│   │   ├── ui/                 layout · components · form · modal · toast · charts · icons
+│   │   ├── ui/                 layout · components · form · table · toolbar · upload
+│   │   │                       record-forms · modal · toast · charts · icons
 │   │   ├── utils/              dom · format · validators
 │   │   └── pages/              وحدة لكل صفحة
 │   └── images/
@@ -66,6 +67,23 @@ python -m http.server 3000
 - **`js/pages/*`** — ربط فقط: قراءة الرابط ← نداء المخزن ← نداء واجهة العرض.
 
 `ui/layout.js` هو المكافئ لـ `layout.tsx`، وكل ملف في `js/pages/` هو المكافئ لمكوّن مسار.
+
+---
+
+## الصفحات
+
+| المجموعة | الصفحات | الأدوار |
+|---|---|---|
+| الدخول والحالة | `login` · `register` · `forgot-password` · `pending` · `rejected` · `404` | الزوار |
+| الرئيسية | `dashboard` بثلاث نسخ حسب الدور | الجميع |
+| النازحون | `displaced` · `displaced-details` · `displaced-create` · `displaced-edit` | مدير النظام (اطلاع) · مسؤول المخيم |
+| الأسر | `families` · `family-details` · `family-create` | مدير النظام · مسؤول المخيم · النازح (أسرته فقط) |
+| المساعدات | `aid` · `aid-details` · `aid-create` · `aid-edit` | الإضافة والتعديل لمسؤول المخيم فقط، والنازح يطّلع |
+| العمليات | `organizations` · `registration-requests` · `registration-request-details` · `documents` · `messages` · `message-details` · `message-compose` · `notifications` | حسب `PAGE_ACCESS` |
+| الحساب | `profile` · `settings` | الجميع |
+| إدارة النظام | `camps` · `camp-admins` · `statistics` | مدير النظام |
+
+كل صفحة تعرض حالة تحميل (skeleton) ثم المحتوى، ولها حالة فارغة بنص عربي حقيقي وحالة خطأ مع إعادة المحاولة. وكل عملية حذف تمرّ بنافذة تأكيد.
 
 ---
 

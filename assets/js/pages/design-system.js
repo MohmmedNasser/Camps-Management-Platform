@@ -42,9 +42,12 @@ import {
   radioCards,
   fieldset,
 } from '../ui/form.js';
+import { dataTable, cellMain, cellMono, rowActions, resultBar } from '../ui/table.js';
+import { toolbar, initToolbar, filterChips } from '../ui/toolbar.js';
+import { dropzone, initDropzone } from '../ui/upload.js';
 import { openModal, confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
-import { STATUS, GENDERS, TENT_TYPES, AID_TYPES } from '../core/config.js';
+import { STATUS, GENDERS, TENT_TYPES, AID_TYPES, DOCUMENT_CATEGORIES } from '../core/config.js';
 
 const SWATCHES = [
   ['Primary', '--color-primary'],
@@ -208,51 +211,82 @@ function formSample() {
   });
 }
 
+/** The real `dataTable` component, so this page matches what pages render. */
 function tableSample() {
   const rows = [
-    ['أحمد محمود الشريف', '402318765', '059 234 5671', 'FAM-000001', STATUS.APPROVED],
-    ['فاطمة عادل الشريف', '402318766', '059 234 5672', 'FAM-000001', STATUS.APPROVED],
-    ['سميرة حسن أبو زيد', '399872145', '059 234 5678', 'FAM-000003', STATUS.PENDING],
+    { id: 'd-1', name: 'أحمد محمود الشريف', nameEn: 'Ahmad Al-Sharif', nid: '402318765', phone: '059 234 5671', family: 'FAM-000001', status: STATUS.APPROVED },
+    { id: 'd-2', name: 'فاطمة عادل الشريف', nameEn: 'Fatima Al-Sharif', nid: '402318766', phone: '059 234 5672', family: 'FAM-000001', status: STATUS.APPROVED },
+    { id: 'd-8', name: 'سميرة حسن أبو زيد', nameEn: 'Samira Abu Zaid', nid: '399872145', phone: '059 234 5678', family: 'FAM-000003', status: STATUS.PENDING },
   ];
+
   return `
-    <div class="table-wrap">
-      <div class="table-scroll">
-        <table class="table">
-          <thead>
-            <tr>
-              <th scope="col">الاسم</th>
-              <th scope="col">رقم الهوية</th>
-              <th scope="col">الهاتف</th>
-              <th scope="col">رقم الأسرة</th>
-              <th scope="col">الحالة</th>
-              <th scope="col"><span class="sr-only">إجراءات</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows
-              .map(
-                (row) => `
-              <tr>
-                <td data-primary data-label="الاسم">${row[0]}</td>
-                <td data-label="رقم الهوية"><span class="cell-mono">${row[1]}</span></td>
-                <td data-label="الهاتف"><span class="cell-mono">${row[2]}</span></td>
-                <td data-label="رقم الأسرة"><span class="cell-mono">${row[3]}</span></td>
-                <td data-label="الحالة">${statusBadge(row[4])}</td>
-                <td data-actions>
-                  <span class="cell-actions">
-                    ${iconButton({ iconName: 'eye', title: 'عرض' })}
-                    ${iconButton({ iconName: 'edit', title: 'تعديل' })}
-                    ${iconButton({ iconName: 'trash', title: 'حذف', variant: 'danger' })}
-                  </span>
-                </td>
-              </tr>`
-              )
-              .join('')}
-          </tbody>
-        </table>
-      </div>
-      ${pagination({ page: 2, pageSize: 10, total: 48 })}
-    </div>`;
+    ${resultBar({ count: 3, total: 48, noun: 'نازح' })}
+    ${dataTable({
+      columns: [
+        { key: 'name', label: 'الاسم', primary: true, cell: (row) => cellMain(row.name, row.nameEn) },
+        { key: 'nid', label: 'رقم الهوية', cell: (row) => cellMono(row.nid) },
+        { key: 'phone', label: 'الهاتف', cell: (row) => cellMono(row.phone) },
+        { key: 'family', label: 'رقم الأسرة', cell: (row) => cellMono(row.family) },
+        { key: 'status', label: 'الحالة', cell: (row) => statusBadge(row.status) },
+        {
+          key: 'actions',
+          label: 'إجراءات',
+          actions: true,
+          cell: () =>
+            rowActions([
+              { iconName: 'eye', title: 'عرض' },
+              { iconName: 'edit', title: 'تعديل' },
+              { iconName: 'trash', title: 'حذف', variant: 'danger' },
+            ]),
+        },
+      ],
+      rows,
+      caption: 'مثال على جدول السجلات',
+      foot: pagination({ page: 2, pageSize: 10, total: 48 }),
+    })}`;
+}
+
+/** Search box, filter panel and quick chips — the head of every list page. */
+function toolbarSample() {
+  return `
+    ${toolbar({
+      searchPlaceholder: 'ابحث بالاسم أو رقم الهوية أو الهاتف…',
+      filters: [
+        { name: 'ds-camp', label: 'المخيم', options: [{ value: 'camp-1', label: 'مخيم النور' }, { value: 'camp-2', label: 'مخيم الرحمة' }] },
+        { name: 'ds-gender', label: 'الجنس', options: GENDERS },
+        { name: 'ds-aid', label: 'نوع المساعدة', options: AID_TYPES.map((type) => ({ value: type.value, label: type.label })) },
+      ],
+      actions: button({ label: 'إضافة نازح', variant: 'primary', iconName: 'plus' }),
+    })}
+    ${filterChips(
+      [
+        { value: '', label: 'الكل', count: 48 },
+        { value: 'pending', label: 'قيد المراجعة', count: 3 },
+        { value: 'approved', label: 'مقبول', count: 44 },
+        { value: 'rejected', label: 'مرفوض', count: 1 },
+      ],
+      'pending'
+    )}`;
+}
+
+/** File picker used by the documents page. */
+function uploadSample() {
+  return card({
+    body: `
+      <form id="ds-upload" novalidate onsubmit="return false">
+        <div class="field-grid">
+          ${dropzone({ name: 'ds-file' })}
+          ${selectField({
+            name: 'ds-doc-category',
+            label: 'نوع المستند',
+            options: DOCUMENT_CATEGORIES.map((item) => ({ value: item.value, label: item.label })),
+            required: true,
+            full: true,
+          })}
+        </div>
+      </form>
+      <p class="u-xs u-muted u-mt-3">المستندات بلا تواريخ انتهاء — يكفي نوع المستند وصاحبه.</p>`,
+  });
 }
 
 function states() {
@@ -349,6 +383,8 @@ ready(() => {
     ${section('بطاقات الإحصاء', statsRow())}
     ${section('التنبيهات', alerts())}
     ${section('النماذج', formSample())}
+    ${section('رفع الملفات', uploadSample())}
+    ${section('شريط البحث والتصفية', toolbarSample())}
     ${section('الجداول', tableSample())}
     ${section('التبويبات وصفوف البيانات', tabsSample())}
     ${section('الحالات الفارغة وحالات الخطأ', states())}
@@ -356,6 +392,8 @@ ready(() => {
     ${section('النوافذ والتنبيهات المنبثقة', overlays())}`;
 
   initTabs(root);
+  initToolbar(root, { onChange: () => {} });
+  initDropzone(qs('#ds-upload', root));
 
   on(qs('[data-open-confirm]'), 'click', async () => {
     const ok = await confirmDialog({

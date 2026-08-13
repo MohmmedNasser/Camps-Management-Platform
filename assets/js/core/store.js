@@ -159,6 +159,36 @@ export const documents = repository('documents', { idPrefix: 'doc' });
 export const messages = repository('messages', { idPrefix: 'msg' });
 export const notifications = repository('notifications', { idPrefix: 'ntf' });
 
+/* ---- Preferences -------------------------------------------------------- */
+
+const PREFERENCE_DEFAULTS = {
+  notifyAid: true,
+  notifyRequests: true,
+  notifyMessages: true,
+  denseTables: false,
+};
+
+/**
+ * Per-user UI preferences. A single row rather than a collection, but the same
+ * rule holds: pages read and write it through here, never through storage.
+ */
+export const preferences = {
+  get(userId) {
+    const all = storage.read('preferences', {});
+    return { ...PREFERENCE_DEFAULTS, ...(all[userId] || {}) };
+  },
+
+  set(userId, patch) {
+    const all = storage.read('preferences', {});
+    all[userId] = { ...PREFERENCE_DEFAULTS, ...(all[userId] || {}), ...patch };
+    storage.write('preferences', all);
+    emit('preferences');
+    return all[userId];
+  },
+
+  defaults: PREFERENCE_DEFAULTS,
+};
+
 /* ---- Async helper ------------------------------------------------------ */
 
 /**
@@ -253,6 +283,7 @@ export default {
   documents,
   messages,
   notifications,
+  preferences,
   load,
   subscribe,
   resetDemoData,
