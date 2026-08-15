@@ -8,7 +8,7 @@
  */
 
 import { qs, delegate, params, setParams } from '../utils/dom.js';
-import { formatNumber, formatCurrency } from '../utils/format.js';
+import { formatNumber, formatPhone } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
@@ -40,21 +40,21 @@ function init({ session, content }) {
 
   content.innerHTML = `
     ${pageHeader({
-      title: 'المؤسسات المانحة',
+      title: 'الجهات المانحة',
       description: 'الجهات التي تقدم المساعدات للأسر داخل المخيمات.',
       actions: can('organization:manage')
-        ? button({ label: 'إضافة مؤسسة', variant: 'primary', iconName: 'plus', attrs: 'data-create' })
+        ? button({ label: 'إضافة جهة', variant: 'primary', iconName: 'plus', attrs: 'data-create' })
         : '',
     })}
     ${alert({
       variant: 'info',
-      title: 'بيانات المؤسسة',
-      text: 'سجل المؤسسة يحتوي على الاسم والشخص المسؤول (اختياري) فقط، دون بريد أو هاتف أو عنوان.',
+      title: 'من يمكن أن يكون جهة مانحة؟',
+      text: 'قد تكون مؤسسة أو مبادرة أو شخصاً، لذلك الاسم وحده مطلوب، ورقم الجوال والشخص المسؤول اختياريان.',
     })}
     <div id="summary" class="u-mt-5"></div>
     ${toolbar({
       searchValue: state.q,
-      searchPlaceholder: 'ابحث باسم المؤسسة أو الشخص المسؤول…',
+      searchPlaceholder: 'ابحث بالاسم أو الشخص المسؤول أو رقم الجوال…',
     })}
     <div id="results">${skeletonTable(5)}</div>`;
 
@@ -78,19 +78,19 @@ function init({ session, content }) {
     if (select.organizationInUse(org.id)) {
       toast.error(
         'تعذر الحذف',
-        'توجد مساعدات مسجلة باسم هذه المؤسسة. احذف تلك السجلات أولاً أو انقلها إلى مؤسسة أخرى.'
+        'توجد مساعدات مسجلة باسم هذه الجهة. احذف تلك السجلات أولاً أو انقلها إلى جهة أخرى.'
       );
       return;
     }
 
     const ok = await confirmDialog({
-      title: 'حذف المؤسسة',
-      text: `سيتم حذف "${org.name}" من قائمة المؤسسات المانحة.`,
+      title: 'حذف الجهة المانحة',
+      text: `سيتم حذف "${org.name}" من قائمة الجهات المانحة.`,
       confirmLabel: 'حذف',
     });
     if (!ok) return;
     store.organizations.remove(org.id);
-    toast.success('تم الحذف', 'تم حذف المؤسسة.');
+    toast.success('تم الحذف', 'تم حذف الجهة المانحة.');
     load(session);
   });
 
@@ -126,13 +126,13 @@ async function load(session) {
 
 function summaryView(rows) {
   const totalAid = rows.reduce((sum, row) => sum + row.aidCount, 0);
-  const totalValue = rows.reduce((sum, row) => sum + row.aidValue, 0);
+  const withPhone = rows.filter((row) => row.phone).length;
 
   return `
     <div class="grid grid--3 u-mb-5">
-      ${statCard({ label: 'عدد المؤسسات', value: formatNumber(rows.length), iconName: 'building' })}
+      ${statCard({ label: 'عدد الجهات المانحة', value: formatNumber(rows.length), iconName: 'building' })}
       ${statCard({ label: 'المساعدات المقدمة', value: formatNumber(totalAid), iconName: 'aid', tone: 'success' })}
-      ${statCard({ label: 'القيمة الإجمالية', value: formatCurrency(totalValue), iconName: 'wallet', tone: 'warning' })}
+      ${statCard({ label: 'جهات لها رقم تواصل', value: formatNumber(withPhone), iconName: 'phone', tone: 'warning' })}
     </div>`;
 }
 
@@ -147,10 +147,10 @@ function resultsView(rows) {
         })
       : emptyState({
           iconName: 'building',
-          title: 'لا توجد مؤسسات مسجلة',
-          text: 'أضف المؤسسات المانحة لتتمكن من ربط المساعدات بها.',
+          title: 'لا توجد جهات مانحة مسجلة',
+          text: 'أضف الجهات المانحة لتتمكن من ربط المساعدات بها.',
           actions: can('organization:manage')
-            ? button({ label: 'إضافة مؤسسة', variant: 'primary', iconName: 'plus', attrs: 'data-create' })
+            ? button({ label: 'إضافة جهة', variant: 'primary', iconName: 'plus', attrs: 'data-create' })
             : '',
         });
   }
@@ -158,9 +158,14 @@ function resultsView(rows) {
   const columns = [
     {
       key: 'name',
-      label: 'اسم المؤسسة',
+      label: 'اسم الجهة',
       primary: true,
       cell: (row) => cellMain(row.name, row.responsiblePerson || 'بدون شخص مسؤول'),
+    },
+    {
+      key: 'phone',
+      label: 'رقم الجوال',
+      cell: (row) => (row.phone ? cellMono(formatPhone(row.phone)) : '<span class="u-muted">—</span>'),
     },
     {
       key: 'responsiblePerson',
@@ -169,7 +174,6 @@ function resultsView(rows) {
     },
     { key: 'aidCount', label: 'عدد المساعدات', cell: (row) => cellMono(row.aidCount) },
     { key: 'familiesCount', label: 'الأسر المستفيدة', cell: (row) => cellMono(row.familiesCount) },
-    { key: 'aidValue', label: 'القيمة الإجمالية', cell: (row) => cellMono(formatCurrency(row.aidValue)) },
     {
       key: 'actions',
       label: 'إجراءات',
@@ -197,8 +201,8 @@ function resultsView(rows) {
   ];
 
   return `
-    ${resultBar({ count: rows.length, total: rows.length, noun: 'مؤسسة' })}
-    ${dataTable({ columns, rows, caption: 'المؤسسات المانحة' })}`;
+    ${resultBar({ count: rows.length, total: rows.length, noun: 'جهة' })}
+    ${dataTable({ columns, rows, caption: 'الجهات المانحة' })}`;
 }
 
 /* ---- Editor dialog --------------------------------------------------------- */
@@ -207,8 +211,8 @@ function openEditor(session, org) {
   const isNew = !org;
 
   const modal = openModal({
-    title: isNew ? 'إضافة مؤسسة' : 'تعديل المؤسسة',
-    description: 'المؤسسة تحتوي على الاسم والشخص المسؤول فقط.',
+    title: isNew ? 'إضافة جهة مانحة' : 'تعديل الجهة المانحة',
+    description: 'الاسم مطلوب؛ رقم الجوال والشخص المسؤول اختياريان.',
     body: `<form class="field-grid" id="org-form" novalidate>${organizationFields(org || {})}</form>`,
     footer: `
       ${button({ label: 'إلغاء', variant: 'secondary', attrs: 'data-close' })}
@@ -222,6 +226,7 @@ function openEditor(session, org) {
     onSubmit: (values) => {
       const payload = {
         name: values.name.trim(),
+        phone: (values.phone || '').trim(),
         responsiblePerson: (values.responsiblePerson || '').trim(),
       };
 
@@ -229,7 +234,7 @@ function openEditor(session, org) {
         (row) => row.name.trim() === payload.name && (!org || row.id !== org.id)
       );
       if (duplicate) {
-        toast.error('تعذر الحفظ', 'توجد مؤسسة مسجلة بنفس الاسم.');
+        toast.error('تعذر الحفظ', 'توجد جهة مسجلة بنفس الاسم.');
         return;
       }
 

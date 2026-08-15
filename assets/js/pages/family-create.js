@@ -1,22 +1,30 @@
 /**
- * Create a family (Camp Admin only).
+ * Register a family (Camp Admin only).
+ *
+ * One form, one submit: the head of household, the family record and every
+ * remaining member are created together. There is no "save the family, then
+ * open it, then add a member" round trip — a family is never left headless and
+ * a member is never left without a family.
  *
  * The ID is generated, never typed: `selectors.nextFamilyId()` produces the
- * next `FAM-000000` in sequence. Members can be attached during creation from
- * the people in this camp who do not belong to a family yet.
+ * next `FAM-000000` in sequence.
  */
 
-import { qs, qsa, esc, delegate } from '../utils/dom.js';
-import { formatAge } from '../utils/format.js';
+import { qs, qsa, params, delegate } from '../utils/dom.js';
 import { mountShell } from '../ui/layout.js';
-import { button, alert, breadcrumb, pageHeader, emptyState } from '../ui/components.js';
-import { bindForm, checkboxField } from '../ui/form.js';
-import { familyFields, familySchema } from '../ui/record-forms.js';
+import { button, alert, breadcrumb, pageHeader } from '../ui/components.js';
+import { bindForm, textareaField, readForm, bindMaternityFields } from '../ui/form.js';
+import {
+  displacedFields,
+  displacedSchema,
+  memberFields,
+  memberSchema,
+  readMember,
+  maternityFrom,
+} from '../ui/record-forms.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
-import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
-import { labelOf, GENDERS } from '../core/config.js';
 
 const shell = mountShell({ active: 'families.html', title: 'إضافة أسرة' });
 if (shell) init(shell);
@@ -24,129 +32,204 @@ if (shell) init(shell);
 function init({ session, content }) {
   const familyId = select.nextFamilyId();
   const camps = select.campOptions(session);
-  const candidates = select.familyHeadCandidates(session.campId);
-  const unassigned = select.unassignedPeople(session.campId);
 
-  content.innerHTML = `
-    ${breadcrumb([{ label: 'الأسر', href: pageUrl('families.html') }, { label: 'إضافة أسرة' }])}
-    ${pageHeader({
-      title: 'إضافة أسرة',
-      description: `سيتم إنشاء الأسرة في ${session.campLabel}.`,
-    })}
+  // Blocks are tracked by index and never renumbered, so removing "فرد 2" does
+  // not silently rewrite the values the admin already typed into "فرد 3".
+  const blocks = [];
+  let nextIndex = 0;
 
-    ${
-      candidates.length
-        ? alert({
-            variant: 'info',
-            title: 'رقم الأسرة يُولَّد تلقائياً',
-            text: `سيحمل هذا السجل الرقم ${familyId}، ولا يمكن تعديله لاحقاً.`,
-          })
-        : alert({
-            variant: 'warning',
-            title: 'لا يوجد نازحون متاحون',
-            text: 'يجب تسجيل نازح واحد على الأقل في المخيم قبل إنشاء أسرة، لأن كل أسرة تحتاج رب أسرة.',
-          })
-    }
-
-    ${
-      candidates.length
-        ? `<form class="form u-mt-5" id="family-form" novalidate>
-            ${familyFields(
-              { id: familyId, campId: session.campId },
-              { camps, members: candidates, lockCamp: camps.length === 1 }
-            )}
-            ${membersFieldset(unassigned)}
-            <div class="form-actions">
-              ${button({ label: 'إلغاء', variant: 'secondary', href: pageUrl('families.html') })}
-              ${button({ label: 'إنشاء الأسرة', variant: 'primary', iconName: 'check', type: 'submit' })}
-            </div>
-          </form>`
-        : `<div class="u-mt-5">${emptyState({
-            iconName: 'users',
-            title: 'ابدأ بتسجيل نازح',
-            text: 'بعد تسجيل أول نازح في المخيم يمكنك إنشاء أسرة وتعيينه رباً لها.',
-            actions: button({
-              label: 'إضافة نازح',
-              variant: 'primary',
-              iconName: 'plus',
-              href: pageUrl('displaced-create.html'),
-            }),
-          })}</div>`
-    }`;
+  content.innerHTML = view(session, familyId, camps);
 
   const form = qs('#family-form', content);
-  if (!form) return;
+  const list = qs('#member-list', content);
+  const empty = qs('#member-empty', content);
+
+  bindMaternityFields(form);
 
   const campSelect = qs('#campId', form);
   if (campSelect && campSelect.disabled) campSelect.value = session.campId;
 
+  /* ---- Duplicate national IDs ------------------------------------------ */
+
+  /**
+   * A national ID may not exist in the store already, and may not repeat
+   * inside this form. `self` is the block index being checked (null = head).
+   */
+  const isDuplicateId = (value, values, self = null) => {
+    const id = String(value || '').trim();
+    if (!id) return false;
+    if (select.nationalIdTaken(id)) return true;
+
+    const others = [values.nationalId, ...blocks.map((i) => values[`member${i}_nationalId`])];
+    const selfSlot = self === null ? 0 : blocks.indexOf(self) + 1;
+    return others.some((other, slot) => slot !== selfSlot && String(other || '').trim() === id);
+  };
+
+  /* ---- Schema, grown and shrunk with the member blocks ------------------ */
+
+  // bindForm reads this object on every run, so mutating it in place is how
+  // dynamically added blocks get validated.
+  const schema = displacedSchema({ isDuplicateId: (value) => isDuplicateId(value, readForm(form)) });
+
+  const addBlock = () => {
+    const index = nextIndex;
+    nextIndex += 1;
+    blocks.push(index);
+
+    list.insertAdjacentHTML('beforeend', memberFields(index));
+    Object.assign(schema, memberSchema(index, { isDuplicateId }));
+    // The new block carries its own maternity toggle; already-wired ones are
+    // skipped, so this stays cheap however many members are added.
+    bindMaternityFields(form);
+    syncEmptyState();
+
+    qs(`[data-member-block="${index}"] .input`, list)?.focus();
+  };
+
+  const removeBlock = (index) => {
+    const node = qs(`[data-member-block="${index}"]`, list);
+    if (node) node.remove();
+    blocks.splice(blocks.indexOf(index), 1);
+    Object.keys(memberSchema(index)).forEach((name) => delete schema[name]);
+    renumber();
+    syncEmptyState();
+  };
+
+  // The stored index stays put; only the visible heading is renumbered.
+  const renumber = () => {
+    qsa('[data-member-block]', list).forEach((node, position) => {
+      const title = qs('.member-block__title', node);
+      if (title) title.textContent = `فرد ${position + 1}`;
+    });
+  };
+
+  const syncEmptyState = () => {
+    if (empty) empty.hidden = blocks.length > 0;
+  };
+
+  syncEmptyState();
+
+  delegate(content, 'click', '[data-add-member]', () => addBlock());
+  delegate(content, 'click', '[data-remove-member]', (event, node) =>
+    removeBlock(Number(node.dataset.removeMember))
+  );
+
+  /* ---- Submit ----------------------------------------------------------- */
+
   bindForm(form, {
-    schema: familySchema(),
+    schema,
     onSubmit: (values) => {
       const campId = values.campId || session.campId;
-      const head = store.displaced.get(values.headId);
 
-      if (!head) {
-        toast.error('تعذر الحفظ', 'رب الأسرة المحدد غير موجود.');
-        return;
-      }
-
-      const family = store.families.create(
-        {
-          id: familyId,
-          campId,
-          headId: head.id,
-          notes: values.notes || '',
-          createdAt: new Date().toISOString(),
+      const result = select.createFamilyWithMembers({
+        campId,
+        notes: (values.notes || '').trim(),
+        head: {
+          fullName: values.fullName.trim(),
+          fullNameEn: (values.fullNameEn || '').trim(),
+          nationalId: values.nationalId.trim(),
+          gender: values.gender,
+          birthDate: values.birthDate,
+          maritalStatus: values.maritalStatus,
+          nationality: values.nationality || 'palestinian',
+          passportNumber: (values.passportNumber || '').trim(),
+          unrwaNumber: (values.unrwaNumber || '').trim(),
+          phone: values.phone.trim(),
+          altPhone: (values.altPhone || '').trim(),
+          email: (values.email || '').trim(),
+          governorate: values.governorate,
+          city: values.city,
+          area: values.area,
+          tentType: values.tentType,
+          originGovernorate: values.originGovernorate,
+          originCity: values.originCity,
+          currentResidence: values.currentResidence,
+          displacementDate: values.displacementDate,
+          chronicDiseases: (values.chronicDiseases || '').trim(),
+          disability: (values.disability || '').trim(),
+          isOrphan: Boolean(values.isOrphan),
+          ...maternityFrom(values),
+          workStatus: values.workStatus,
+          incomeSource: values.incomeSource,
+          monthlyIncome: Number(values.monthlyIncome || 0),
         },
-        { id: familyId }
-      );
-
-      // The head must be a member of their own family, in the same camp.
-      store.displaced.update(head.id, { familyId: family.id, campId, relationship: 'head' });
-
-      qsa('[name^="member-"]:checked', form).forEach((checkbox) => {
-        const memberId = checkbox.name.replace('member-', '');
-        if (memberId === head.id) return;
-        store.displaced.update(memberId, { familyId: family.id });
+        members: blocks.map((index) => readMember(values, index)),
       });
 
-      toast.success('تم الإنشاء', `تم إنشاء الأسرة ${family.id}.`);
-      go('family-details.html', { id: family.id });
+      toast.success(
+        'تم الإنشاء',
+        `تم إنشاء الأسرة ${result.family.id} مع ${result.members.length + 1} من الأفراد.`
+      );
+      go('family-details.html', { id: result.family.id });
     },
   });
 
-  // Someone chosen as head should not also appear as an optional member.
-  delegate(content, 'change', '#headId', (event, node) => {
-    qsa('[data-member-row]', form).forEach((row) => {
-      const isHead = row.dataset.memberRow === node.value;
-      row.hidden = isHead;
-      const checkbox = qs('input', row);
-      if (isHead && checkbox) checkbox.checked = false;
-    });
-  });
+  // Deep link: ?members=3 opens the form with three blocks ready.
+  const preset = Math.min(10, Math.max(0, Number(params().members) || 0));
+  for (let i = 0; i < preset; i += 1) addBlock();
 }
 
-function membersFieldset(people) {
-  if (!people.length) return '';
+/* ---- Markup -------------------------------------------------------------- */
 
+function view(session, familyId, camps) {
   return `
-    <fieldset class="fieldset">
-      <legend class="fieldset__legend">إضافة أفراد (اختياري)</legend>
-      <p class="fieldset__hint">النازحون المسجلون في المخيم وغير المرتبطين بأي أسرة.</p>
-      <div class="field-grid">
-        ${people
-          .map(
-            (person) => `
-          <div data-member-row="${esc(person.id)}">
-            ${checkboxField({
-              name: `member-${person.id}`,
-              label: person.fullName,
-              description: `${labelOf(GENDERS, person.gender)} · ${formatAge(person.birthDate)} · ${person.nationalId}`,
-            })}
-          </div>`
-          )
-          .join('')}
+    ${breadcrumb([{ label: 'الأسر', href: pageUrl('families.html') }, { label: 'إضافة أسرة' }])}
+    ${pageHeader({
+      title: 'إضافة أسرة',
+      description: `سيتم إنشاء الأسرة وأفرادها معاً في ${session.campLabel}.`,
+    })}
+
+    ${alert({
+      variant: 'info',
+      title: 'رقم الأسرة يُولَّد تلقائياً',
+      text: `سيحمل هذا السجل الرقم ${familyId}، ولا يمكن تعديله لاحقاً. سجّل بيانات رب الأسرة ثم أضف بقية الأفراد، واحفظ الجميع دفعة واحدة.`,
+    })}
+
+    <form class="form u-mt-5" id="family-form" novalidate>
+      <h2 class="card__title u-mb-4">بيانات رب الأسرة</h2>
+      ${displacedFields(
+        { campId: session.campId },
+        { camps, lockCamp: camps.length === 1, showFamily: false }
+      )}
+
+      <fieldset class="fieldset">
+        <legend class="fieldset__legend">أفراد الأسرة</legend>
+        <p class="fieldset__hint">
+          أضف بقية أفراد الأسرة هنا. يرث كل فرد بيانات المخيم ونوع الخيمة والنزوح من رب الأسرة،
+          ويمكن استكمال باقي بياناته لاحقاً من ملفه.
+        </p>
+
+        <div class="member-list" id="member-list"></div>
+
+        <p class="u-sm u-secondary" id="member-empty" hidden>
+          لم تتم إضافة أي فرد بعد. يمكنك حفظ الأسرة برب الأسرة وحده وإضافة الأفراد لاحقاً.
+        </p>
+
+        <div class="member-add">
+          ${button({
+            label: 'إضافة فرد',
+            variant: 'secondary',
+            iconName: 'plus',
+            attrs: 'data-add-member',
+          })}
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset">
+        <legend class="fieldset__legend">ملاحظات الأسرة</legend>
+        <div class="field-grid">
+          ${textareaField({
+            name: 'notes',
+            label: 'ملاحظات',
+            optional: true,
+            placeholder: 'أي معلومات إضافية عن حالة الأسرة…',
+          })}
+        </div>
+      </fieldset>
+
+      <div class="form-actions">
+        ${button({ label: 'إلغاء', variant: 'secondary', href: pageUrl('families.html') })}
+        ${button({ label: 'حفظ الأسرة', variant: 'primary', iconName: 'check', type: 'submit' })}
       </div>
-    </fieldset>`;
+    </form>`;
 }

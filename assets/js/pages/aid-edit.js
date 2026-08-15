@@ -2,7 +2,7 @@
  * Edit an aid record (Camp Admin only).
  */
 
-import { qs, esc, params, delegate } from '../utils/dom.js';
+import { qs, params, delegate } from '../utils/dom.js';
 import { formatDate } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
@@ -54,7 +54,6 @@ function render({ session, content, record }) {
   const campId = record.campId || session.campId;
   const organizations = select.organizationOptions();
   const families = select.familyOptions(campId);
-  const people = select.personOptions({ campId, familyId: record.familyId });
   const row = select.aidRow(record);
 
   content.innerHTML = `
@@ -70,10 +69,10 @@ function render({ session, content, record }) {
         ? button({ label: 'حذف السجل', variant: 'danger', iconName: 'trash', attrs: 'data-delete' })
         : '',
     })}
-    ${formSummary([row.typeLabel, row.organizationName, row.familyId, row.personName])}
+    ${formSummary([row.typeLabel, row.organizationName, row.familyId, row.familyHeadName])}
 
     <form class="form" id="aid-form" novalidate>
-      ${aidFields(record, { organizations, families, people })}
+      ${aidFields(record, { organizations, families })}
       <div class="form-actions">
         ${button({
           label: 'إلغاء',
@@ -86,25 +85,18 @@ function render({ session, content, record }) {
 
   const form = qs('#aid-form', content);
 
-  delegate(content, 'change', '#familyId', (event, node) => {
-    const recipients = qs('#displacedId', form);
-    if (!recipients) return;
-    recipients.innerHTML =
-      `<option value="">اختر...</option>` +
-      select
-        .personOptions({ campId, familyId: node.value })
-        .map((option) => `<option value="${esc(option.value)}">${esc(option.label)}</option>`)
-        .join('');
-  });
-
   bindForm(form, {
     schema: aidSchema(),
     onSubmit: (values) => {
       const family = store.families.get(values.familyId);
       store.aid.update(record.id, {
-        ...values,
-        value: Number(values.value || 0),
+        type: values.type,
+        organizationId: values.organizationId,
+        familyId: values.familyId,
         campId: family ? family.campId : campId,
+        date: values.date,
+        quantity: (values.quantity || '').trim(),
+        description: values.description.trim(),
       });
       toast.success('تم الحفظ', 'تم تحديث سجل المساعدة.');
       go('aid-details.html', { id: record.id });

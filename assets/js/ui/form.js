@@ -204,6 +204,39 @@ export function fieldset({ legend, hint = '', fields, columns = 2 }) {
     </fieldset>`;
 }
 
+/**
+ * Show each pregnancy / breastfeeding block only while its record is female,
+ * and clear it on a switch to male so a stale `true` cannot survive a
+ * correction and then be counted by the maternity filters.
+ *
+ * A block declares which select governs it — `data-maternity="gender"` for the
+ * main record, `data-maternity="member2_gender"` inside a family member block —
+ * so the head form and every repeated member share one mechanism.
+ *
+ * Safe to call again after new blocks are added; already-wired ones are skipped.
+ */
+export function bindMaternityFields(scope) {
+  qsa('[data-maternity]', scope).forEach((block) => {
+    if (block.dataset.maternityBound === 'true') return;
+    const gender = qs(`#${CSS.escape(block.dataset.maternity)}`, scope);
+    if (!gender) return;
+
+    const sync = () => {
+      const female = gender.value === 'female';
+      block.hidden = !female;
+      if (!female) {
+        qsa('input[type="checkbox"]', block).forEach((box) => {
+          box.checked = false;
+        });
+      }
+    };
+
+    on(gender, 'change', sync);
+    block.dataset.maternityBound = 'true';
+    sync();
+  });
+}
+
 /* ---- Controller --------------------------------------------------------- */
 
 /** Read a form into a plain object, with checkboxes as booleans. */

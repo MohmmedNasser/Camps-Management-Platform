@@ -49,10 +49,14 @@
 .u-mt-4 { margin-top: var(--space-4); }
 .u-mt-5 { margin-top: var(--space-5); }
 .u-mt-6 { margin-top: var(--space-6); }
+.u-mt-7 { margin-top: var(--space-7); }
+.u-mb-1 { margin-bottom: var(--space-1); }
 .u-mb-2 { margin-bottom: var(--space-2); }
 .u-mb-3 { margin-bottom: var(--space-3); }
 .u-mb-4 { margin-bottom: var(--space-4); }
 .u-mb-5 { margin-bottom: var(--space-5); }
+.u-mb-6 { margin-bottom: var(--space-6); }
+.u-mb-7 { margin-bottom: var(--space-7); }
 
 .u-full { width: 100%; }
 .u-nowrap { white-space: nowrap; }

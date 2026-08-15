@@ -1,8 +1,13 @@
 /**
- * Families — list, search and filter.
+ * Families — list, advanced filtering and Excel export.
  *
- * A family is an independent entity with its own auto-generated ID; the member
- * count is derived at read time, never stored.
+ * A family is an independent entity with its own auto-generated ID; every
+ * count shown here — members, children by age band, orphans, chronic cases,
+ * mothers — is derived from the members at read time, never stored.
+ *
+ * Filters ask about member characteristics: "وجود طفل أقل من 3 سنوات" matches
+ * a family when at least one member is under three. The table, the result
+ * count and the export all read one call to `selectors.getFilteredFamilies`.
  */
 
 import { delegate, params, setParams, qs } from '../utils/dom.js';
@@ -18,22 +23,37 @@ import {
   pagination,
 } from '../ui/components.js';
 import { dataTable, cellMain, cellMono, rowActions, resultBar } from '../ui/table.js';
-import { toolbar, initToolbar } from '../ui/toolbar.js';
+import { toolbar, initToolbar, activeFilters, filterSummary } from '../ui/toolbar.js';
 import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
-import { ROLES, PAGE_SIZE } from '../core/config.js';
+import { FAMILY_COLUMNS, familyExportRow } from '../core/exports.js';
+import { exportSheet, timestampedName } from '../utils/xlsx.js';
+import { ROLES, PAGE_SIZE, FAMILY_SIZES, YES_NO } from '../core/config.js';
 
-const SIZES = [
-  { value: 'small', label: '1 – 3 أفراد' },
-  { value: 'medium', label: '4 – 6 أفراد' },
-  { value: 'large', label: '7 أفراد فأكثر' },
+/* ---- State --------------------------------------------------------------- */
+
+/** Every filter the page understands; `q` and `page` are handled separately. */
+const FILTER_KEYS = [
+  'campId',
+  'size',
+  'hasChildren',
+  'hasUnder3',
+  'hasUnder2',
+  'hasUnder1',
+  'hasOrphan',
+  'hasChronic',
+  'hasBreastfeeding',
+  'hasPregnant',
 ];
 
-const state = { q: '', campId: '', size: '', page: 1 };
+const state = { q: '', page: 1 };
+FILTER_KEYS.forEach((key) => {
+  state[key] = '';
+});
 
 const shell = mountShell({ active: 'families.html', title: 'الأسر' });
 if (shell) init(shell);
@@ -41,58 +61,154 @@ if (shell) init(shell);
 function readQuery() {
   const query = params();
   state.q = query.q || '';
-  state.campId = query.campId || '';
-  state.size = query.size || '';
+  FILTER_KEYS.forEach((key) => {
+    state[key] = query[key] || '';
+  });
   state.page = Math.max(1, Number(query.page) || 1);
 }
 
-function activeFilterCount() {
-  return ['campId', 'size'].filter((key) => state[key]).length;
+/** Filter values only — what the summary chips and the active count read. */
+function filterValues() {
+  return Object.fromEntries(FILTER_KEYS.map((key) => [key, state[key]]));
 }
+
+function activeFilterCount() {
+  return FILTER_KEYS.filter((key) => state[key]).length;
+}
+
+/* ---- Filter descriptors --------------------------------------------------- */
+
+/**
+ * One list drives the panel, the active count and the summary chips, so a
+ * filter can never appear in one and be missing from another. Every
+ * member-characteristic filter means "at least one member matches".
+ */
+function filterSpec(session) {
+  const isSuper = session.role === ROLES.SUPER_ADMIN;
+
+  return [
+    isSuper && {
+      name: 'campId',
+      label: 'المخيم',
+      group: 'بيانات الأسرة',
+      options: select.campOptions(session),
+      value: state.campId,
+    },
+    {
+      name: 'size',
+      label: 'عدد أفراد الأسرة',
+      group: 'بيانات الأسرة',
+      options: FAMILY_SIZES.map(({ value, label }) => ({ value, label })),
+      value: state.size,
+    },
+
+    {
+      name: 'hasChildren',
+      label: 'وجود أطفال أقل من 18',
+      group: 'الأطفال',
+      options: YES_NO,
+      value: state.hasChildren,
+    },
+    {
+      name: 'hasUnder3',
+      label: 'وجود أطفال أقل من 3 سنوات',
+      group: 'الأطفال',
+      options: YES_NO,
+      value: state.hasUnder3,
+    },
+    {
+      name: 'hasUnder2',
+      label: 'وجود طفل أقل من سنتين',
+      group: 'الأطفال',
+      options: YES_NO,
+      value: state.hasUnder2,
+    },
+    {
+      name: 'hasUnder1',
+      label: 'وجود طفل أقل من سنة',
+      group: 'الأطفال',
+      options: YES_NO,
+      value: state.hasUnder1,
+    },
+
+    {
+      name: 'hasOrphan',
+      label: 'وجود يتيم',
+      group: 'الحالة الصحية والاجتماعية',
+      options: YES_NO,
+      value: state.hasOrphan,
+    },
+    {
+      name: 'hasChronic',
+      label: 'وجود مرض مزمن',
+      group: 'الحالة الصحية والاجتماعية',
+      options: YES_NO,
+      value: state.hasChronic,
+    },
+    {
+      name: 'hasBreastfeeding',
+      label: 'وجود مرضعة',
+      group: 'الحالة الصحية والاجتماعية',
+      options: YES_NO,
+      value: state.hasBreastfeeding,
+    },
+    {
+      name: 'hasPregnant',
+      label: 'وجود حامل',
+      group: 'الحالة الصحية والاجتماعية',
+      options: YES_NO,
+      value: state.hasPregnant,
+    },
+  ].filter(Boolean);
+}
+
+/* ---- Entry --------------------------------------------------------------- */
 
 function init({ session, content }) {
   readQuery();
   const isSuper = session.role === ROLES.SUPER_ADMIN;
-
-  const filters = [
-    isSuper && {
-      name: 'campId',
-      label: 'المخيم',
-      options: select.campOptions(session),
-      value: state.campId,
-    },
-    { name: 'size', label: 'حجم الأسرة', options: SIZES, value: state.size },
-  ].filter(Boolean);
+  const filters = filterSpec(session);
 
   content.innerHTML = `
     ${pageHeader({
       title: 'الأسر',
       description: isSuper ? 'سجل الأسر في جميع المخيمات.' : `سجل الأسر في ${session.campLabel}.`,
-      actions: can('family:create')
-        ? button({
-            label: 'إضافة أسرة',
-            variant: 'primary',
-            iconName: 'plus',
-            href: pageUrl('family-create.html'),
-          })
-        : '',
+      actions: `
+        ${button({
+          label: 'تصدير إلى Excel',
+          variant: 'secondary',
+          iconName: 'download',
+          attrs: 'data-export',
+        })}
+        ${
+          can('family:create')
+            ? button({
+                label: 'إضافة أسرة',
+                variant: 'primary',
+                iconName: 'plus',
+                href: pageUrl('family-create.html'),
+              })
+            : ''
+        }`,
     })}
     ${toolbar({
       searchValue: state.q,
       searchPlaceholder: 'ابحث برقم الأسرة أو اسم رب الأسرة…',
       filters,
       activeCount: activeFilterCount(),
+      staged: true,
     })}
+    <div id="summary"></div>
     <div id="results">${skeletonTable(6)}</div>`;
 
   initToolbar(content, {
     onChange: (values) => {
-      state.q = values.q ?? state.q;
-      ['campId', 'size'].forEach((key) => {
+      if (values.q !== undefined) state.q = values.q;
+      FILTER_KEYS.forEach((key) => {
         if (key in values) state[key] = values[key];
       });
       state.page = 1;
-      setParams({ ...values, page: '' });
+      setParams({ q: state.q, ...filterValues(), page: '' });
       load(session);
     },
   });
@@ -102,6 +218,23 @@ function init({ session, content }) {
     if (!page || node.disabled) return;
     state.page = page;
     setParams({ page: page > 1 ? page : '' });
+    load(session);
+  });
+
+  // Removing a single chip from the summary.
+  delegate(content, 'click', '[data-remove-filter]', (event, node) => {
+    const key = node.dataset.removeFilter;
+    if (key === 'q') {
+      state.q = '';
+      const search = qs('#toolbar-search', content);
+      if (search) search.value = '';
+    } else {
+      state[key] = '';
+      const field = qs(`#${key}`, content);
+      if (field) field.value = '';
+    }
+    state.page = 1;
+    setParams({ q: state.q, ...filterValues(), page: '' });
     load(session);
   });
 
@@ -120,12 +253,27 @@ function init({ session, content }) {
   delegate(content, 'click', '[data-clear-search]', () => {
     const search = qs('#toolbar-search', content);
     if (search) search.value = '';
-    Object.assign(state, { q: '', campId: '', size: '', page: 1 });
-    setParams({ q: '', campId: '', size: '', page: '' });
+    state.q = '';
+    state.page = 1;
+    FILTER_KEYS.forEach((key) => {
+      state[key] = '';
+      const field = qs(`#${key}`, content);
+      if (field) field.value = '';
+    });
+    setParams({ q: '', ...filterValues(), page: '' });
     load(session);
   });
 
+  delegate(content, 'click', '[data-export]', (event, node) => exportRows(session, node));
+
   load(session);
+}
+
+/* ---- Data + rendering ----------------------------------------------------- */
+
+/** The single query behind the table, the count and the export. */
+function collect(session) {
+  return select.getFilteredFamilies(session, { query: state.q, ...filterValues() });
 }
 
 async function load(session) {
@@ -134,21 +282,66 @@ async function load(session) {
   target.innerHTML = skeletonTable(6);
 
   try {
-    const rows = await store.load(() =>
-      select.searchFamilies({
-        query: state.q,
-        campId: state.campId,
-        size: state.size,
-        scope: select.scopeFilter(session),
-      })
-    );
+    const rows = await store.load(() => collect(session));
     target.innerHTML = resultsView(session, rows);
+
+    const summary = qs('#summary');
+    if (summary) {
+      summary.innerHTML = filterSummary({
+        active: activeFilters(filterSpec(session), filterValues()),
+        total: rows.length,
+        noun: 'أسرة',
+        query: state.q,
+      });
+    }
   } catch (error) {
     console.error(error);
     target.innerHTML = errorState({ retryAttrs: 'data-retry' });
     delegate(target, 'click', '[data-retry]', () => load(session));
   }
 }
+
+/* ---- Excel export --------------------------------------------------------- */
+
+/**
+ * Export exactly what is on screen.
+ *
+ * The rows come from the same `collect()` the table used, and the scope lives
+ * inside `getFilteredFamilies` — a Camp Admin cannot reach another camp's
+ * families by editing `?campId=`.
+ */
+async function exportRows(session, trigger) {
+  const original = trigger.innerHTML;
+  trigger.disabled = true;
+  trigger.innerHTML = `<span class="btn__spinner"></span><span>جارٍ تجهيز ملف Excel…</span>`;
+
+  try {
+    const rows = await store.load(() => collect(session), 120);
+
+    if (!rows.length) {
+      toast.error('لا توجد نتائج لتصديرها', 'عدّل الفلاتر ثم حاول مرة أخرى.');
+      return;
+    }
+
+    const filtered = Boolean(state.q) || activeFilterCount() > 0;
+    const count = exportSheet({
+      columns: FAMILY_COLUMNS,
+      rows: rows.map(familyExportRow),
+      filename: timestampedName('الأسر', { filtered }),
+      sheetName: 'الأسر',
+    });
+
+    toast.success('تم التصدير', `تم تصدير ${count} سجلًا بنجاح.`);
+  } catch (error) {
+    console.error(error);
+    toast.error('تعذر التصدير', 'حدث خطأ أثناء تجهيز الملف، حاول مرة أخرى.');
+  } finally {
+    trigger.disabled = false;
+    trigger.innerHTML = original;
+  }
+}
+
+/* ---- Table ---------------------------------------------------------------- */
 
 function resultsView(session, rows) {
   if (!rows.length) return emptyView();
@@ -167,15 +360,19 @@ function resultsView(session, rows) {
     },
     { key: 'headName', label: 'رب الأسرة' },
     { key: 'membersCount', label: 'عدد الأفراد', cell: (row) => cellMono(row.membersCount) },
-    { key: 'childrenCount', label: 'الأطفال', cell: (row) => cellMono(row.childrenCount) },
+    { key: 'childrenUnder18', label: 'أطفال < 18', cell: (row) => cellMono(row.childrenUnder18) },
+    { key: 'childrenUnder3', label: 'أطفال < 3', cell: (row) => cellMono(row.childrenUnder3) },
     ...(isSuper ? [{ key: 'campName', label: 'المخيم' }] : []),
     {
       key: 'flags',
       label: 'حالات خاصة',
       cell: (row) =>
         [
-          row.hasDisability ? badge('إعاقة', 'error') : '',
-          row.hasChronic ? badge('مرض مزمن', 'warning') : '',
+          row.orphans ? badge(`أيتام ${row.orphans}`, 'info') : '',
+          row.chronic ? badge('مرض مزمن', 'warning') : '',
+          row.disability ? badge('إعاقة', 'error') : '',
+          row.pregnant ? badge('حامل', 'success') : '',
+          row.breastfeeding ? badge('مرضعة', 'success') : '',
         ]
           .filter(Boolean)
           .join(' ') || '<span class="u-muted">—</span>',
@@ -230,8 +427,8 @@ function emptyView() {
     ? emptyState({
         iconName: 'search',
         title: 'لا توجد نتائج مطابقة',
-        text: 'جرّب تعديل كلمات البحث أو إزالة عوامل التصفية.',
-        actions: button({ label: 'إعادة تعيين البحث', variant: 'secondary', attrs: 'data-clear-search' }),
+        text: 'جرّب تعديل كلمات البحث أو إزالة بعض الفلاتر.',
+        actions: button({ label: 'إزالة كل الفلاتر', variant: 'secondary', attrs: 'data-clear-search' }),
       })
     : emptyState({
         iconName: 'family',

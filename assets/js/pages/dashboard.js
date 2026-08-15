@@ -5,7 +5,7 @@
  */
 
 import { esc, delegate } from '../utils/dom.js';
-import { formatDate, formatNumber, formatCurrency, formatRelative } from '../utils/format.js';
+import { formatDate, formatNumber, formatRelative } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
@@ -56,9 +56,22 @@ async function init({ session, content }) {
 }
 
 function collect(session) {
-  const stats = select.statistics(session);
+  // A displaced person has no relationship to camp-wide figures, so none are
+  // computed for them — only their own file, family, aid and notifications.
+  if (session.role === ROLES.DISPLACED) {
+    return {
+      person: session.displacedId ? store.displaced.get(session.displacedId) : null,
+      family: session.displacedId ? select.familyOfPerson(session.displacedId) : null,
+      myAid: session.displacedId ? select.aidForPerson(session.displacedId) : [],
+      myDocuments: session.displacedId
+        ? store.documents.list((row) => row.displacedId === session.displacedId)
+        : [],
+      notifications: select.notificationsFor(session.id).slice(0, 4),
+    };
+  }
+
   return {
-    stats,
+    stats: select.statistics(session),
     byMonth: select.displacedByMonth(session),
     aidByType: select.aidByType(session),
     familySizes: select.familySizeDistribution(session),
@@ -69,15 +82,7 @@ function collect(session) {
       )
       .filter((row) => row.status === STATUS.PENDING)
       .slice(0, 4),
-    recentAid: select
-      .searchAid({ scope: select.scopeFilter(session) })
-      .slice(0, 5),
-    person: session.displacedId ? store.displaced.get(session.displacedId) : null,
-    family: session.displacedId ? select.familyOfPerson(session.displacedId) : null,
-    myAid: session.displacedId ? select.aidForPerson(session.displacedId) : [],
-    myDocuments: session.displacedId
-      ? store.documents.list((row) => row.displacedId === session.displacedId)
-      : [],
+    recentAid: select.searchAid({ scope: select.scopeFilter(session) }).slice(0, 5),
     notifications: select.notificationsFor(session.id).slice(0, 4),
   };
 }
@@ -126,20 +131,31 @@ function requestRow(request) {
     </a>`;
 }
 
+/** Aid line for an administrator — links through to the record. */
 function aidRow(record) {
   return `
     <a class="list__row" href="${pageUrl('aid-details.html', { id: record.id })}">
       <span class="list__main">
         <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
-        <span class="list__meta">${esc(record.personName)} · <span class="mono">${esc(record.familyId)}</span> · ${esc(
-          formatDate(record.date)
-        )}</span>
+        <span class="list__meta">${esc(record.familyHeadName)} · <span class="mono">${esc(
+          record.familyId
+        )}</span> · ${esc(formatDate(record.date))}</span>
       </span>
-      <span class="list__side"><span class="mono u-sm">${esc(formatCurrency(record.value))}</span>${icon(
-        'chevronLeft',
-        { size: 16 }
-      )}</span>
+      <span class="list__side">${icon('chevronLeft', { size: 16 })}</span>
     </a>`;
+}
+
+/** The same line for a displaced person — read-only, nowhere to click through to. */
+function ownAidRow(record) {
+  return `
+    <div class="list__row">
+      <span class="list__main">
+        <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
+        <span class="list__meta">${esc(formatDate(record.date))}${
+          record.quantity ? ` · ${esc(record.quantity)}` : ''
+        }</span>
+      </span>
+    </div>`;
 }
 
 /* ---- Camp Admin --------------------------------------------------------- */
@@ -153,8 +169,10 @@ function campAdminView(session, data) {
     <div class="grid grid--4 u-mb-6">
       ${statCard({ label: 'إجمالي النازحين', value: formatNumber(stats.displaced), iconName: 'users', href: pageUrl('displaced.html') })}
       ${statCard({ label: 'إجمالي الأسر', value: formatNumber(stats.families), iconName: 'family', tone: 'success', href: pageUrl('families.html') })}
+      ${statCard({ label: 'الأطفال أقل من 18 عامًا', value: formatNumber(stats.children), iconName: 'users', tone: 'success' })}
+      ${statCard({ label: 'الأيتام', value: formatNumber(stats.orphans), iconName: 'family', tone: 'warning' })}
       ${statCard({ label: 'طلبات التسجيل', value: formatNumber(stats.requests), iconName: 'clipboard', tone: 'warning', meta: stats.requests ? 'بانتظار المراجعة' : 'لا توجد طلبات', href: pageUrl('registration-requests.html') })}
-      ${statCard({ label: 'إجمالي المساعدات', value: formatNumber(stats.aid), iconName: 'aid', meta: formatCurrency(stats.aidValue), href: pageUrl('aid.html') })}
+      ${statCard({ label: 'المساعدات الموزَّعة', value: formatNumber(stats.aid), iconName: 'aid', meta: `${formatNumber(stats.donors)} جهة مانحة`, href: pageUrl('aid.html') })}
       ${statCard({ label: 'ذوو الإعاقة', value: formatNumber(stats.disability), iconName: 'accessibility', tone: 'error' })}
       ${statCard({ label: 'الأمراض المزمنة', value: formatNumber(stats.chronic), iconName: 'heartPulse', tone: 'warning' })}
     </div>
@@ -226,7 +244,9 @@ function superAdminView(session, data) {
       ${statCard({ label: 'مسؤولو المخيمات', value: formatNumber(stats.campAdmins), iconName: 'shield', tone: 'success', href: pageUrl('camp-admins.html') })}
       ${statCard({ label: 'إجمالي النازحين', value: formatNumber(stats.displaced), iconName: 'users', href: pageUrl('displaced.html') })}
       ${statCard({ label: 'إجمالي الأسر', value: formatNumber(stats.families), iconName: 'family', href: pageUrl('families.html') })}
-      ${statCard({ label: 'إجمالي المساعدات', value: formatNumber(stats.aid), iconName: 'aid', meta: formatCurrency(stats.aidValue) })}
+      ${statCard({ label: 'الأطفال أقل من 18 عامًا', value: formatNumber(stats.children), iconName: 'users', tone: 'success' })}
+      ${statCard({ label: 'الأيتام', value: formatNumber(stats.orphans), iconName: 'family', tone: 'warning' })}
+      ${statCard({ label: 'المساعدات الموزَّعة', value: formatNumber(stats.aid), iconName: 'aid', meta: `${formatNumber(stats.donors)} جهة مانحة` })}
       ${statCard({ label: 'ذوو الإعاقة', value: formatNumber(stats.disability), iconName: 'accessibility', tone: 'error' })}
       ${statCard({ label: 'الأمراض المزمنة', value: formatNumber(stats.chronic), iconName: 'heartPulse', tone: 'warning' })}
       ${statCard({ label: 'طلبات التسجيل', value: formatNumber(stats.requests), iconName: 'clipboard', tone: 'warning' })}
@@ -275,11 +295,13 @@ function profileCompletion(person) {
   return Math.round((filled / checks.length) * 100);
 }
 
+/**
+ * "لوحتي الشخصية" — only what belongs to the signed-in person and their
+ * family. No camp totals, no displaced-person counts, no management figures.
+ */
 function displacedView(session, data) {
-  const { person, family, myAid, myDocuments, stats } = data;
+  const { person, family, myAid, myDocuments } = data;
   const completion = profileCompletion(person);
-
-  const aidValue = myAid.reduce((sum, record) => sum + Number(record.value || 0), 0);
 
   return `
     ${greeting(session, `${session.campLabel} — ${formatDate(new Date())}`)}
@@ -305,7 +327,7 @@ function displacedView(session, data) {
 
     <div class="grid grid--4 u-mb-6">
       ${statCard({ label: 'أفراد الأسرة', value: formatNumber(family ? family.membersCount : 0), iconName: 'family', href: family ? pageUrl('family-details.html', { id: family.id }) : '' })}
-      ${statCard({ label: 'المساعدات المستلمة', value: formatNumber(myAid.length), iconName: 'aid', tone: 'success', meta: formatCurrency(aidValue), href: pageUrl('aid.html') })}
+      ${statCard({ label: 'المساعدات المستلمة', value: formatNumber(myAid.length), iconName: 'aid', tone: 'success', href: pageUrl('aid.html') })}
       ${statCard({ label: 'المستندات', value: formatNumber(myDocuments.length), iconName: 'folder', href: pageUrl('documents.html') })}
       ${statCard({ label: 'الإشعارات غير المقروءة', value: formatNumber(select.unreadNotificationCount(session.id)), iconName: 'bell', tone: 'warning', href: pageUrl('notifications.html') })}
     </div>
@@ -316,7 +338,7 @@ function displacedView(session, data) {
           title: 'سجل مساعداتي',
           href: pageUrl('aid.html'),
           hrefLabel: 'عرض الكل',
-          rows: myAid.slice(0, 5).map(aidRow),
+          rows: myAid.slice(0, 5).map(ownAidRow),
           empty: emptyState({
             iconName: 'aid',
             title: 'لا توجد مساعدات مسجلة',

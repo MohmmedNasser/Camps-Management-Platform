@@ -9,10 +9,35 @@
 import { getSession } from './auth.js';
 import { ROLES, STATUS, PAGE_ACCESS } from './config.js';
 
-/** File name of the current page, e.g. "displaced-details.html". */
+/** Last path segment, e.g. "displaced-details.html" or "displaced". */
+function lastSegment() {
+  return window.location.pathname.split('/').pop();
+}
+
+/**
+ * True when this document was served without a `.html` extension.
+ *
+ * Static hosts that rewrite clean URLs (`serve`, Vercel, Netlify, GitHub
+ * Pages) redirect `foo.html` to `foo` — and that redirect **drops the query
+ * string**, which would silently strip every `?id=` the app navigates with.
+ * So the app matches whichever form it was loaded in and never triggers the
+ * redirect in the first place.
+ */
+function cleanUrls() {
+  const name = lastSegment();
+  return Boolean(name) && !name.includes('.');
+}
+
+/**
+ * Page key of the current document, always with the `.html` suffix that
+ * `PAGE_ACCESS` and `NAVIGATION` are keyed by — regardless of whether the host
+ * served it as `displaced.html` or `displaced`. Getting this wrong makes
+ * `PAGE_ACCESS[page]` undefined, which silently lets every role through.
+ */
 export function currentPage() {
-  const name = window.location.pathname.split('/').pop();
-  return name && name.includes('.') ? name : 'index.html';
+  const name = lastSegment();
+  if (!name) return 'index.html';
+  return name.includes('.') ? name : `${name}.html`;
 }
 
 /** True when the current document sits inside /pages/. */
@@ -20,13 +45,24 @@ function inPagesDir() {
   return window.location.pathname.includes('/pages/');
 }
 
-/** Build a URL to a page from wherever we are. */
+/**
+ * Build a URL to a page from wherever we are.
+ *
+ * `page` may already carry a query (notification hrefs do), in which case the
+ * two sets of parameters are merged rather than concatenated.
+ */
 export function pageUrl(page, params = {}) {
   const prefix = inPagesDir() ? '' : 'pages/';
-  const search = new URLSearchParams(
-    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')
-  ).toString();
-  return `${prefix}${page}${search ? `?${search}` : ''}`;
+  const [rawFile, rawQuery = ''] = String(page).split('?');
+  const file = cleanUrls() ? rawFile.replace(/\.html$/, '') : rawFile;
+
+  const search = new URLSearchParams(rawQuery);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, value);
+  });
+
+  const query = search.toString();
+  return `${prefix}${file}${query ? `?${query}` : ''}`;
 }
 
 export function go(page, params) {

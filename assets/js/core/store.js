@@ -260,12 +260,26 @@ export function validateData() {
   });
 
   aid.list().forEach((record) => {
-    if (record.organizationId && !orgIds.has(record.organizationId)) {
-      problems.push(`المساعدة ${record.id} تشير إلى مؤسسة غير موجودة`);
+    if (!record.organizationId || !orgIds.has(record.organizationId)) {
+      problems.push(`المساعدة ${record.id} تشير إلى جهة مانحة غير موجودة`);
     }
-    if (record.familyId && !familyIds.has(record.familyId)) {
+    if (!record.familyId || !familyIds.has(record.familyId)) {
       problems.push(`المساعدة ${record.id} تشير إلى أسرة غير موجودة`);
     }
+    // Aid records the assistance itself, never its price or an individual
+    // recipient — a leftover field means stale data.
+    if ('value' in record || 'displacedId' in record) {
+      problems.push(`المساعدة ${record.id} تحتوي على حقول ملغاة (القيمة أو المستلم)`);
+    }
+  });
+
+  const nationalIds = new Map();
+  displaced.list().forEach((person) => {
+    if (!person.nationalId) return;
+    if (nationalIds.has(person.nationalId)) {
+      problems.push(`رقم الهوية ${person.nationalId} مكرر بين أكثر من نازح`);
+    }
+    nationalIds.set(person.nationalId, person.id);
   });
 
   if (problems.length) console.warn('[store] تعارض في البيانات:\n' + problems.join('\n'));

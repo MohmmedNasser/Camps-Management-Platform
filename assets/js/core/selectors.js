@@ -19,8 +19,22 @@ import {
   DOCUMENT_CATEGORIES,
   MESSAGE_SUBJECTS,
   RELATIONSHIPS,
+  AGE_BANDS,
+  FAMILY_SIZES,
 } from './config.js';
 import { nextFamilySequence, ageFrom } from '../utils/format.js';
+
+/** Anyone under this age counts as a child in every statistic. */
+export const CHILD_AGE_LIMIT = 18;
+
+/**
+ * Resolve a tri-state filter ('' | 'yes' | 'no') against a boolean fact.
+ * '' means "الكل" and matches everything.
+ */
+function matchesYesNo(value, fact) {
+  if (!value) return true;
+  return value === 'yes' ? Boolean(fact) : !fact;
+}
 
 /* ---- Lookups ----------------------------------------------------------- */
 
@@ -71,23 +85,63 @@ export function familyMembers(familyId) {
     .sort((a, b) => (a.relationship === 'head' ? -1 : b.relationship === 'head' ? 1 : 0));
 }
 
+/** Age in whole years, or null when there is no usable birth date. */
+export function ageOf(person) {
+  return ageFrom(person && person.birthDate);
+}
+
+/** A child is anyone under 18 — derived from the birth date, never stored. */
+export function isChild(person) {
+  return isUnder(person, CHILD_AGE_LIMIT);
+}
+
+/** Strictly under `years` — the shared primitive behind every age band. */
+export function isUnder(person, years) {
+  const age = ageOf(person);
+  return age !== null && age < years;
+}
+
+/**
+ * The boolean facts every filter, statistic and export column asks about one
+ * person. Defined once so the table, the dashboard and the Excel file can
+ * never disagree about what "طفل" or "مرضعة" means.
+ */
+export function personFacts(person) {
+  return {
+    isChild: isChild(person),
+    under1: isUnder(person, 1),
+    under2: isUnder(person, 2),
+    under3: isUnder(person, 3),
+    isOrphan: Boolean(person.isOrphan),
+    hasChronic: Boolean(person.chronicDiseases),
+    hasDisability: Boolean(person.disability),
+    // Only meaningful for female records; absent on male ones by design.
+    isPregnant: Boolean(person.isPregnant),
+    isBreastfeeding: Boolean(person.isBreastfeeding),
+    maternityApplies: person.gender === 'female',
+  };
+}
+
 /** Family record enriched with derived counts — membersCount is never stored. */
 export function familyWithStats(familyId) {
   const family = store.families.get(familyId);
   if (!family) return null;
   const members = familyMembers(familyId);
   const head = store.displaced.get(family.headId);
+  const facts = familyFacts(members);
   return {
     ...family,
+    ...facts,
     members,
-    membersCount: members.length,
     head,
     headName: head ? head.fullName : '—',
     campName: campName(family.campId),
     aidCount: store.aid.count((record) => record.familyId === familyId),
-    childrenCount: members.filter((m) => ['son', 'daughter'].includes(m.relationship)).length,
-    hasDisability: members.some((m) => Boolean(m.disability)),
-    hasChronic: members.some((m) => Boolean(m.chronicDiseases)),
+    // Aliases the detail and list views already read.
+    childrenCount: facts.childrenUnder18,
+    orphansCount: facts.orphans,
+    hasDisability: facts.disability > 0,
+    hasChronic: facts.chronic > 0,
   };
 }
 
@@ -100,18 +154,113 @@ export function familyOfPerson(displacedId) {
   return person && person.familyId ? familyWithStats(person.familyId) : null;
 }
 
-/** Search families by id, head name or notes. */
-export function searchFamilies({ query = '', campId = '', size = '', scope = () => true } = {}) {
+/**
+ * One pass over `displaced` producing familyId -> members.
+ *
+ * Family filters ask about member characteristics, so without this every
+ * family would rescan the whole displaced collection — O(families × people).
+ * Built once per query and handed down.
+ */
+function membersByFamily() {
+  const index = new Map();
+  store.displaced.list().forEach((person) => {
+    if (!person.familyId) return;
+    const bucket = index.get(person.familyId);
+    if (bucket) bucket.push(person);
+    else index.set(person.familyId, [person]);
+  });
+  return index;
+}
+
+/**
+ * Aggregate counts for one family, derived from its members every time.
+ *
+ * These are exactly the Excel columns in spec §17 and exactly what the family
+ * filters test, so a family shown by "وجود حامل" always exports حوامل ≥ 1.
+ */
+export function familyFacts(members) {
+  const count = (predicate) => members.filter(predicate).length;
+  return {
+    membersCount: members.length,
+    childrenUnder18: count(isChild),
+    childrenUnder3: count((m) => isUnder(m, 3)),
+    childrenUnder2: count((m) => isUnder(m, 2)),
+    childrenUnder1: count((m) => isUnder(m, 1)),
+    orphans: count((m) => m.isOrphan),
+    chronic: count((m) => m.chronicDiseases),
+    disability: count((m) => m.disability),
+    breastfeeding: count((m) => m.isBreastfeeding),
+    pregnant: count((m) => m.isPregnant),
+  };
+}
+
+/**
+ * Families matching a search term AND every active filter.
+ *
+ * A family matches a member-characteristic filter when **at least one** of its
+ * members satisfies it (spec §12). Scope is derived from the session, so a
+ * Camp Admin cannot reach another camp's families through the URL.
+ */
+export function getFilteredFamilies(session, filters = {}) {
+  if (!session || session.role === ROLES.DISPLACED) return [];
+
+  const {
+    query = '',
+    campId = '',
+    size = '',
+    hasChildren = '',
+    hasUnder3 = '',
+    hasUnder2 = '',
+    hasUnder1 = '',
+    hasOrphan = '',
+    hasChronic = '',
+    hasBreastfeeding = '',
+    hasPregnant = '',
+  } = filters;
+
   const term = query.trim().toLowerCase();
+  const camp = scopedCampId(session, campId);
+  const bucket = FAMILY_SIZES.find((entry) => entry.value === size);
+  const index = membersByFamily();
 
   return store.families
-    .list(scope)
-    .map((family) => familyWithStats(family.id))
+    .list(scopeFilter(session))
+    .filter((family) => !camp || family.campId === camp)
+    .map((family) => {
+      const members = (index.get(family.id) || []).slice().sort((a, b) =>
+        a.relationship === 'head' ? -1 : b.relationship === 'head' ? 1 : 0
+      );
+      const head = store.displaced.get(family.headId);
+      const facts = familyFacts(members);
+      return {
+        ...family,
+        ...facts,
+        members,
+        head,
+        headName: head ? head.fullName : '—',
+        campName: campName(family.campId),
+        aidCount: store.aid.count((record) => record.familyId === family.id),
+        // Kept for the existing list columns.
+        childrenCount: facts.childrenUnder18,
+        orphansCount: facts.orphans,
+        hasDisability: facts.disability > 0,
+        hasChronic: facts.chronic > 0,
+      };
+    })
     .filter((family) => {
-      if (campId && family.campId !== campId) return false;
-      if (size === 'small' && family.membersCount > 3) return false;
-      if (size === 'medium' && (family.membersCount < 4 || family.membersCount > 6)) return false;
-      if (size === 'large' && family.membersCount < 7) return false;
+      if (bucket) {
+        if (family.membersCount < bucket.min) return false;
+        if (bucket.max !== null && family.membersCount > bucket.max) return false;
+      }
+      if (!matchesYesNo(hasChildren, family.childrenUnder18)) return false;
+      if (!matchesYesNo(hasUnder3, family.childrenUnder3)) return false;
+      if (!matchesYesNo(hasUnder2, family.childrenUnder2)) return false;
+      if (!matchesYesNo(hasUnder1, family.childrenUnder1)) return false;
+      if (!matchesYesNo(hasOrphan, family.orphans)) return false;
+      if (!matchesYesNo(hasChronic, family.chronic)) return false;
+      if (!matchesYesNo(hasBreastfeeding, family.breastfeeding)) return false;
+      if (!matchesYesNo(hasPregnant, family.pregnant)) return false;
+
       if (!term) return true;
       return (
         family.id.toLowerCase().includes(term) ||
@@ -128,6 +277,66 @@ export function nextFamilyId() {
   return `FAM-${String(sequence).padStart(6, '0')}`;
 }
 
+/** Fields a household shares, copied from the head onto every member. */
+const SHARED_HOUSEHOLD_FIELDS = [
+  'tentType',
+  'currentResidence',
+  'originGovernorate',
+  'originCity',
+  'displacementDate',
+  'governorate',
+  'city',
+  'area',
+];
+
+/**
+ * Create a family, its head and its remaining members in one go.
+ *
+ * This is the only way a family comes into existence from the UI: the admin
+ * fills one form and everything is written together, so a family is never
+ * left headless and a member is never left without a family. Members inherit
+ * the household fields from the head, since they live in the same shelter.
+ *
+ * @param {{campId: string, notes?: string, head: object, members?: object[]}} input
+ * @returns {{family: object, head: object, members: object[]}}
+ */
+export function createFamilyWithMembers({ campId, notes = '', head, members = [] }) {
+  const familyId = nextFamilyId();
+  const now = new Date().toISOString();
+
+  const headRecord = store.displaced.create({
+    ...head,
+    campId,
+    familyId,
+    relationship: 'head',
+    status: STATUS.APPROVED,
+    createdAt: now,
+  });
+
+  const shared = {};
+  SHARED_HOUSEHOLD_FIELDS.forEach((field) => {
+    if (headRecord[field]) shared[field] = headRecord[field];
+  });
+
+  const memberRecords = members.map((member) =>
+    store.displaced.create({
+      ...shared,
+      ...member,
+      campId,
+      familyId,
+      status: STATUS.APPROVED,
+      createdAt: now,
+    })
+  );
+
+  const family = store.families.create(
+    { id: familyId, campId, headId: headRecord.id, notes, createdAt: now },
+    { id: familyId }
+  );
+
+  return { family, head: headRecord, members: memberRecords };
+}
+
 /* ---- Displaced people --------------------------------------------------- */
 
 /** Row shaped for list views (name, id, phone, family, camp, status). */
@@ -136,14 +345,17 @@ export function displacedRow(person) {
     ...person,
     campName: campName(person.campId),
     familyLabel: person.familyId || '—',
-    aidCount: store.aid.count((record) => record.displacedId === person.id),
+    // Aid belongs to the family, so a person's aid count is their family's.
+    aidCount: person.familyId
+      ? store.aid.count((record) => record.familyId === person.familyId)
+      : 0,
   };
 }
 
 /**
  * Search across name, national ID and phone; filter by camp, aid type and
- * supporting organization. File number and tent number are intentionally
- * absent — the domain has neither.
+ * donor. File number and tent number are intentionally absent — the domain
+ * has neither.
  */
 export function searchDisplaced({
   query = '',
@@ -151,21 +363,24 @@ export function searchDisplaced({
   aidType = '',
   organizationId = '',
   gender = '',
+  tentType = '',
   status = '',
   scope = () => true,
 } = {}) {
   const term = query.trim().toLowerCase();
 
-  let aidPersonIds = null;
+  // Aid is recorded against a family, so an aid filter narrows to the people
+  // whose family received a matching delivery.
+  let aidFamilyIds = null;
   if (aidType || organizationId) {
-    aidPersonIds = new Set(
+    aidFamilyIds = new Set(
       store.aid
         .list(
           (record) =>
             (!aidType || record.type === aidType) &&
             (!organizationId || record.organizationId === organizationId)
         )
-        .map((record) => record.displacedId)
+        .map((record) => record.familyId)
     );
   }
 
@@ -174,8 +389,9 @@ export function searchDisplaced({
     .filter((person) => {
       if (campId && person.campId !== campId) return false;
       if (gender && person.gender !== gender) return false;
+      if (tentType && person.tentType !== tentType) return false;
       if (status && person.status !== status) return false;
-      if (aidPersonIds && !aidPersonIds.has(person.id)) return false;
+      if (aidFamilyIds && !aidFamilyIds.has(person.familyId)) return false;
       if (!term) return true;
       return (
         person.fullName.toLowerCase().includes(term) ||
@@ -186,6 +402,88 @@ export function searchDisplaced({
       );
     })
     .map(displacedRow);
+}
+
+/* ---- The filtered query (table + dashboard + export share this) --------- */
+
+/**
+ * The camp a session is allowed to read, and nothing wider.
+ *
+ * A Camp Admin's camp is taken from the session, never from the request: a
+ * hand-edited `?campId=` cannot widen it, only the Super Admin may pass one.
+ * Every export runs through here, so the file can only ever contain rows the
+ * signed-in user was already entitled to see.
+ */
+function scopedCampId(session, requestedCampId = '') {
+  if (!session) return null;
+  if (session.role === ROLES.CAMP_ADMIN) return session.campId;
+  if (session.role === ROLES.SUPER_ADMIN) return requestedCampId || '';
+  return null;
+}
+
+/**
+ * Displaced people matching a search term AND every active filter.
+ *
+ * Filters combine with AND throughout; an empty value means "الكل" and drops
+ * out. This is the one query behind the list table and the Excel export, so
+ * the count on screen is by construction the row count in the file.
+ *
+ * @param {object} session signed-in user — supplies the scope, non-negotiable
+ * @param {object} filters { query, campId, gender, status, tentType, ageBand,
+ *   isChild, isOrphan, hasChronic, isPregnant, isBreastfeeding, aidType,
+ *   organizationId }
+ */
+export function getFilteredDisplaced(session, filters = {}) {
+  if (!session || session.role === ROLES.DISPLACED) return [];
+
+  const {
+    query = '',
+    campId = '',
+    gender = '',
+    status = '',
+    tentType = '',
+    ageBand = '',
+    isChild: childFilter = '',
+    isOrphan: orphanFilter = '',
+    hasChronic: chronicFilter = '',
+    isPregnant: pregnantFilter = '',
+    isBreastfeeding: breastfeedingFilter = '',
+    aidType = '',
+    organizationId = '',
+  } = filters;
+
+  const band = AGE_BANDS.find((entry) => entry.value === ageBand);
+
+  return searchDisplaced({
+    query,
+    campId: scopedCampId(session, campId),
+    gender,
+    status,
+    tentType,
+    aidType,
+    organizationId,
+    scope: scopeFilter(session),
+  }).filter((person) => {
+    const facts = personFacts(person);
+
+    if (band && !isUnder(person, band.max)) return false;
+    if (!matchesYesNo(childFilter, facts.isChild)) return false;
+    if (!matchesYesNo(orphanFilter, facts.isOrphan)) return false;
+    if (!matchesYesNo(chronicFilter, facts.hasChronic)) return false;
+
+    // Maternity filters never apply to a male record: "غير حامل" must not
+    // return every man in the camp.
+    if (pregnantFilter) {
+      if (!facts.maternityApplies) return false;
+      if (!matchesYesNo(pregnantFilter, facts.isPregnant)) return false;
+    }
+    if (breastfeedingFilter) {
+      if (!facts.maternityApplies) return false;
+      if (!matchesYesNo(breastfeedingFilter, facts.isBreastfeeding)) return false;
+    }
+
+    return true;
+  });
 }
 
 /** Is this national ID already registered (in any camp)? */
@@ -213,12 +511,18 @@ export function campOfNationalId(nationalId) {
 
 /* ---- Aid ---------------------------------------------------------------- */
 
+/**
+ * Aid enriched for display. The record names a donor and a beneficiary family
+ * — there is no individual recipient and no monetary value.
+ */
 export function aidRow(record) {
+  const family = record.familyId ? store.families.get(record.familyId) : null;
+  const head = family ? store.displaced.get(family.headId) : null;
   return {
     ...record,
     typeLabel: aidTypeLabel(record.type),
     organizationName: organizationName(record.organizationId),
-    personName: personName(record.displacedId),
+    familyHeadName: head ? head.fullName : '—',
     campName: campName(record.campId),
   };
 }
@@ -228,7 +532,6 @@ export function searchAid({
   type = '',
   organizationId = '',
   familyId = '',
-  displacedId = '',
   scope = () => true,
 } = {}) {
   const term = query.trim().toLowerCase();
@@ -238,12 +541,13 @@ export function searchAid({
       if (type && record.type !== type) return false;
       if (organizationId && record.organizationId !== organizationId) return false;
       if (familyId && record.familyId !== familyId) return false;
-      if (displacedId && record.displacedId !== displacedId) return false;
       if (!term) return true;
-      const person = store.displaced.get(record.displacedId);
+      const family = record.familyId ? store.families.get(record.familyId) : null;
+      const head = family ? store.displaced.get(family.headId) : null;
       return (
-        (person && person.fullName.toLowerCase().includes(term)) ||
         (record.familyId || '').toLowerCase().includes(term) ||
+        (head ? head.fullName.toLowerCase().includes(term) : false) ||
+        (record.description || '').toLowerCase().includes(term) ||
         organizationName(record.organizationId).toLowerCase().includes(term) ||
         aidTypeLabel(record.type).includes(term)
       );
@@ -256,14 +560,11 @@ export function aidForFamily(familyId) {
   return searchAid({ familyId });
 }
 
+/** What a displaced person has received — that is, what their family received. */
 export function aidForPerson(displacedId) {
   const person = store.displaced.get(displacedId);
-  if (!person) return [];
-  // A person sees aid registered to them personally and to their family.
-  return store.aid
-    .list((record) => record.displacedId === displacedId || record.familyId === person.familyId)
-    .map(aidRow)
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
+  if (!person || !person.familyId) return [];
+  return aidForFamily(person.familyId);
 }
 
 /* ---- Option lists for selects -------------------------------------------- */
@@ -324,15 +625,18 @@ export function unassignedPeople(campId) {
   return store.displaced.list((person) => person.campId === campId && !person.familyId);
 }
 
-/* ---- Organizations ------------------------------------------------------- */
+/* ---- Donors -------------------------------------------------------------- */
 
-/** An organisation has a name and an optional responsible person — nothing else. */
+/**
+ * A donor has a name, plus an optional responsible person and phone. It may be
+ * an organisation, an initiative or a single person, so nothing else is asked
+ * for and nothing but the name is required.
+ */
 export function organizationRow(org) {
   const aidRows = store.aid.list((record) => record.organizationId === org.id);
   return {
     ...org,
     aidCount: aidRows.length,
-    aidValue: aidRows.reduce((sum, record) => sum + Number(record.value || 0), 0),
     familiesCount: new Set(aidRows.map((record) => record.familyId)).size,
   };
 }
@@ -344,13 +648,14 @@ export function searchOrganizations({ query = '' } = {}) {
       (org) =>
         !term ||
         org.name.toLowerCase().includes(term) ||
-        (org.responsiblePerson || '').toLowerCase().includes(term)
+        (org.responsiblePerson || '').toLowerCase().includes(term) ||
+        (org.phone || '').includes(term)
     )
     .map(organizationRow)
     .sort((a, b) => b.aidCount - a.aidCount);
 }
 
-/** An organisation still referenced by aid records must not be deleted. */
+/** A donor still referenced by aid records must not be deleted. */
 export function organizationInUse(organizationId) {
   return store.aid.exists((record) => record.organizationId === organizationId);
 }
@@ -421,12 +726,13 @@ export function approveRequest(requestId, reviewerId) {
     gender: 'male',
     maritalStatus: 'single',
     nationality: 'palestinian',
-    tentType: 'family_tent',
+    tentType: 'tarp_tent',
     workStatus: 'unemployed',
     incomeSource: 'none',
     monthlyIncome: 0,
     chronicDiseases: '',
     disability: '',
+    isOrphan: false,
     status: STATUS.APPROVED,
     createdAt: new Date().toISOString(),
   });
@@ -639,7 +945,8 @@ export function removeDisplaced(displacedId) {
   const person = store.displaced.get(displacedId);
   if (!person) return false;
 
-  store.aid.removeWhere((record) => record.displacedId === displacedId);
+  // Aid belongs to the family, not the person, so it survives them; it is only
+  // removed when the family itself goes (see removeFamily).
   store.documents.removeWhere((row) => row.displacedId === displacedId);
 
   // A family whose head is removed loses its head; an empty family is removed.
@@ -732,12 +1039,14 @@ export function statistics(session) {
     families: familyRows.length,
     requests: pendingRequestCount(session),
     aid: aidRows.length,
-    aidValue: aidRows.reduce((sum, record) => sum + Number(record.value || 0), 0),
+    donors: new Set(aidRows.map((record) => record.organizationId)).size,
     disability: people.filter((person) => Boolean(person.disability)).length,
     chronic: people.filter((person) => Boolean(person.chronicDiseases)).length,
     males: people.filter((person) => person.gender === 'male').length,
     females: people.filter((person) => person.gender === 'female').length,
-    children: people.filter((person) => ['son', 'daughter'].includes(person.relationship)).length,
+    // Age-derived, not relationship-derived: a "son" of 30 is not a child.
+    children: people.filter(isChild).length,
+    orphans: people.filter((person) => Boolean(person.isOrphan)).length,
     camps: store.camps.count(),
     campAdmins: store.users.count((user) => user.role === ROLES.CAMP_ADMIN),
     documents: store.documents.list(inScope).length,
@@ -850,28 +1159,24 @@ export function relationshipDistribution(session) {
   return distributionOver(session, RELATIONSHIPS, 'relationship');
 }
 
-/** Aid record count and value per organisation, largest first. */
+/** Number of deliveries per donor, largest first. */
 export function aidByOrganization(session) {
   const rows = store.aid.list(
     session && session.role === ROLES.CAMP_ADMIN ? (row) => row.campId === session.campId : () => true
   );
   return store.organizations
     .list()
-    .map((org) => {
-      const own = rows.filter((record) => record.organizationId === org.id);
-      return {
-        value: org.id,
-        label: org.name,
-        count: own.length,
-        total: own.reduce((sum, record) => sum + Number(record.value || 0), 0),
-      };
-    })
+    .map((org) => ({
+      value: org.id,
+      label: org.name,
+      count: rows.filter((record) => record.organizationId === org.id).length,
+    }))
     .filter((entry) => entry.count > 0)
     .sort((a, b) => b.count - a.count);
 }
 
-/** Aid value per month for the last `months` months. */
-export function aidValueByMonth(session, months = 8) {
+/** Number of aid deliveries per month for the last `months` months. */
+export function aidCountByMonth(session, months = 8) {
   const rows = store.aid.list(
     session && session.role === ROLES.CAMP_ADMIN ? (row) => row.campId === session.campId : () => true
   );
@@ -886,35 +1191,32 @@ export function aidValueByMonth(session, months = 8) {
     const date = new Date(record.date);
     if (Number.isNaN(date.getTime())) return;
     const bucket = index.get(`${date.getFullYear()}-${date.getMonth()}`);
-    if (bucket) bucket.value += Number(record.value || 0);
+    if (bucket) bucket.value += 1;
   });
   return buckets;
 }
 
-/** Families that received the most aid — used by the statistics page. */
+/** Families that received the most deliveries — used by the statistics page. */
 export function topFamiliesByAid(session, limit = 5) {
   const rows = store.aid.list(
     session && session.role === ROLES.CAMP_ADMIN ? (row) => row.campId === session.campId : () => true
   );
-  const totals = new Map();
+  const counts = new Map();
   rows.forEach((record) => {
-    const entry = totals.get(record.familyId) || { count: 0, total: 0 };
-    entry.count += 1;
-    entry.total += Number(record.value || 0);
-    totals.set(record.familyId, entry);
+    counts.set(record.familyId, (counts.get(record.familyId) || 0) + 1);
   });
-  return [...totals.entries()]
-    .map(([familyId, entry]) => {
+  return [...counts.entries()]
+    .map(([familyId, count]) => {
       const family = store.families.get(familyId);
       const head = family ? store.displaced.get(family.headId) : null;
       return {
         familyId,
+        count,
         headName: head ? head.fullName : '—',
         campName: family ? campName(family.campId) : '—',
-        ...entry,
       };
     })
-    .sort((a, b) => b.total - a.total)
+    .sort((a, b) => b.count - a.count)
     .slice(0, limit);
 }
 
@@ -931,6 +1233,8 @@ export function campBreakdown() {
         (user) => user.role === ROLES.CAMP_ADMIN && user.campId === camp.id
       ),
       disabilityCount: people.filter((person) => Boolean(person.disability)).length,
+      childrenCount: people.filter(isChild).length,
+      orphansCount: people.filter((person) => Boolean(person.isOrphan)).length,
     };
   });
 }

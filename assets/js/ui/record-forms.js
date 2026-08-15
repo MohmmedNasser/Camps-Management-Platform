@@ -16,7 +16,14 @@
 import { esc } from '../utils/dom.js';
 import { toInputDate } from '../utils/format.js';
 import { rules } from '../utils/validators.js';
-import { inputField, selectField, textareaField, fieldset, radioCards } from './form.js';
+import {
+  inputField,
+  selectField,
+  textareaField,
+  fieldset,
+  radioCards,
+  checkboxField,
+} from './form.js';
 import {
   GENDERS,
   MARITAL_STATUSES,
@@ -39,10 +46,13 @@ const statusOptions = (values) => values.map((value) => ({ value, label: STATUS_
 
 /**
  * @param {object} values current record (empty object when creating)
- * @param {{camps: {value,label}[], families: {value,label}[], lockCamp?: boolean}} options
+ * @param {{camps: {value,label}[], families: {value,label}[], lockCamp?: boolean,
+ *         showFamily?: boolean}} options
+ *        `showFamily: false` drops the family/relationship group — used by the
+ *        add-a-family form, where the person being described *is* the head.
  */
 export function displacedFields(values = {}, options = {}) {
-  const { camps = [], families = [], lockCamp = false } = options;
+  const { camps = [], families = [], lockCamp = false, showFamily = true } = options;
 
   return [
     fieldset({
@@ -219,6 +229,34 @@ export function displacedFields(values = {}, options = {}) {
     }),
 
     fieldset({
+      legend: 'الحالة الاجتماعية',
+      // The maternity block is revealed only for a female record — see
+      // `bindMaternityFields` in ui/form.js. A male file never shows it.
+      fields: [
+        checkboxField({
+          name: 'isOrphan',
+          label: 'يتيم',
+          description: 'يُحتسب ضمن عدد الأيتام في إحصائيات المخيم.',
+          checked: Boolean(values.isOrphan),
+        }),
+        `<div data-maternity="gender"${values.gender === 'female' ? '' : ' hidden'}>
+          ${checkboxField({
+            name: 'isPregnant',
+            label: 'حامل',
+            description: 'يُحتسب ضمن عدد الحوامل في إحصائيات المخيم.',
+            checked: Boolean(values.isPregnant),
+          })}
+          ${checkboxField({
+            name: 'isBreastfeeding',
+            label: 'مرضعة',
+            description: 'يُحتسب ضمن عدد المرضعات في إحصائيات المخيم.',
+            checked: Boolean(values.isBreastfeeding),
+          })}
+        </div>`,
+      ],
+    }),
+
+    fieldset({
       legend: 'الوضع الاقتصادي',
       fields: [
         selectField({
@@ -245,27 +283,31 @@ export function displacedFields(values = {}, options = {}) {
       ],
     }),
 
-    fieldset({
-      legend: 'الأسرة',
-      hint: 'اربط النازح بأسرة قائمة، أو أنشئ الأسرة أولاً من صفحة الأسر.',
-      fields: [
-        selectField({
-          name: 'familyId',
-          label: 'الأسرة',
-          options: families,
-          value: values.familyId,
-          placeholder: 'بدون أسرة',
-          optional: true,
-        }),
-        selectField({
-          name: 'relationship',
-          label: 'صلة القرابة برب الأسرة',
-          options: RELATIONSHIPS,
-          value: values.relationship,
-        }),
-      ],
-    }),
-  ].join('');
+    showFamily
+      ? fieldset({
+          legend: 'الأسرة',
+          hint: 'اربط النازح بأسرة قائمة، أو أنشئ الأسرة وأفرادها معاً من صفحة إضافة أسرة.',
+          fields: [
+            selectField({
+              name: 'familyId',
+              label: 'الأسرة',
+              options: families,
+              value: values.familyId,
+              placeholder: 'بدون أسرة',
+              optional: true,
+            }),
+            selectField({
+              name: 'relationship',
+              label: 'صلة القرابة برب الأسرة',
+              options: RELATIONSHIPS,
+              value: values.relationship,
+            }),
+          ],
+        })
+      : '',
+  ]
+    .filter(Boolean)
+    .join('');
 }
 
 /* ---- Family ------------------------------------------------------------- */
@@ -320,14 +362,179 @@ export function familyFields(values = {}, options = {}) {
   ].join('');
 }
 
+/**
+ * Maternity flags to persist for one submitted form.
+ *
+ * Written only for a female record, so a male file never carries
+ * `isPregnant: false` — which would make "غير حامل" match every man in the
+ * camp. Kept next to `displacedFields` so the two cannot drift.
+ */
+export function maternityFrom(values = {}) {
+  if (values.gender !== 'female') {
+    return { isPregnant: undefined, isBreastfeeding: undefined };
+  }
+  return {
+    isPregnant: Boolean(values.isPregnant),
+    isBreastfeeding: Boolean(values.isBreastfeeding),
+  };
+}
+
+/* ---- Family member (combined registration form) ------------------------- */
+
+/**
+ * One member block inside the "add a family" form.
+ *
+ * Field names are prefixed with the block index so the whole family submits as
+ * a single form. Household details (camp, shelter, displacement) are not asked
+ * again — members inherit them from the head, since they live in the same
+ * shelter; anything else is edited later from the member's own file.
+ *
+ * @param {number} index position of this block, 0-based
+ * @param {object} values prefill, used when re-rendering after a removal
+ */
+export function memberFields(index, values = {}) {
+  const at = (field) => `member${index}_${field}`;
+
+  return `
+    <div class="member-block" data-member-block="${index}">
+      <div class="member-block__head">
+        <h3 class="member-block__title">فرد ${index + 1}</h3>
+        <button type="button" class="icon-btn icon-btn--danger" data-remove-member="${index}"
+          title="حذف هذا الفرد">
+          <span aria-hidden="true">✕</span>
+          <span class="sr-only">حذف الفرد ${index + 1}</span>
+        </button>
+      </div>
+      <div class="field-grid">
+        ${inputField({
+          name: at('fullName'),
+          label: 'الاسم الكامل',
+          value: values.fullName,
+          required: true,
+          full: true,
+          placeholder: 'الاسم الرباعي كما في الهوية',
+        })}
+        ${inputField({
+          name: at('nationalId'),
+          label: 'رقم الهوية',
+          value: values.nationalId,
+          required: true,
+          mono: true,
+          inputMode: 'numeric',
+          placeholder: '9 أرقام',
+          attrs: 'maxlength="9"',
+        })}
+        ${selectField({
+          name: at('relationship'),
+          label: 'صلة القرابة برب الأسرة',
+          options: RELATIONSHIPS.filter((item) => item.value !== 'head'),
+          value: values.relationship,
+          required: true,
+        })}
+        ${inputField({
+          name: at('birthDate'),
+          label: 'تاريخ الميلاد',
+          type: 'date',
+          value: toInputDate(values.birthDate),
+          required: true,
+        })}
+        ${selectField({
+          name: at('gender'),
+          label: 'الجنس',
+          options: GENDERS,
+          value: values.gender,
+          required: true,
+        })}
+        ${inputField({
+          name: at('chronicDiseases'),
+          label: 'الأمراض المزمنة',
+          value: values.chronicDiseases,
+          optional: true,
+          placeholder: 'مثال: ربو',
+        })}
+        ${inputField({
+          name: at('disability'),
+          label: 'الإعاقة',
+          value: values.disability,
+          optional: true,
+          placeholder: 'مثال: إعاقة حركية',
+        })}
+        ${checkboxField({
+          name: at('isOrphan'),
+          label: 'يتيم',
+          description: 'يُحتسب ضمن عدد الأيتام في إحصائيات المخيم.',
+          checked: Boolean(values.isOrphan),
+        })}
+        <div data-maternity="${at('gender')}"${values.gender === 'female' ? '' : ' hidden'}>
+          ${checkboxField({
+            name: at('isPregnant'),
+            label: 'حامل',
+            checked: Boolean(values.isPregnant),
+          })}
+          ${checkboxField({
+            name: at('isBreastfeeding'),
+            label: 'مرضعة',
+            checked: Boolean(values.isBreastfeeding),
+          })}
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Validation rules for one member block, keyed by its prefixed field names. */
+export function memberSchema(index, { isDuplicateId = () => false } = {}) {
+  const at = (field) => `member${index}_${field}`;
+  return {
+    [at('fullName')]: [rules.required('اسم الفرد'), rules.minLength(6, 'اسم الفرد')],
+    [at('nationalId')]: [
+      rules.required('رقم الهوية'),
+      rules.nationalId(),
+      rules.custom(
+        (value, values) => !isDuplicateId(value, values, index),
+        'رقم الهوية مسجّل مسبقاً أو مكرر داخل هذا النموذج.'
+      ),
+    ],
+    [at('relationship')]: [rules.required('صلة القرابة')],
+    [at('birthDate')]: [rules.required('تاريخ الميلاد'), rules.pastDate('تاريخ الميلاد')],
+    [at('gender')]: [rules.required('الجنس')],
+  };
+}
+
+/** Pull one member's values out of a flat form-values object. */
+export function readMember(values, index) {
+  const at = (field) => values[`member${index}_${field}`];
+  const gender = at('gender') || 'male';
+
+  return {
+    fullName: (at('fullName') || '').trim(),
+    nationalId: (at('nationalId') || '').trim(),
+    relationship: at('relationship') || 'other',
+    birthDate: at('birthDate') || '',
+    gender,
+    chronicDiseases: (at('chronicDiseases') || '').trim(),
+    disability: (at('disability') || '').trim(),
+    isOrphan: Boolean(at('isOrphan')),
+    ...maternityFrom({
+      gender,
+      isPregnant: at('isPregnant'),
+      isBreastfeeding: at('isBreastfeeding'),
+    }),
+  };
+}
+
 /* ---- Aid ---------------------------------------------------------------- */
 
 /**
+ * Aid records what was distributed, by whom, to which family and when.
+ *
+ * It is not a financial transaction: there is deliberately no price, no
+ * estimated value, and no individual recipient — the beneficiary is the family.
+ *
  * @param {object} values
- * @param {{organizations, families, people, lockCamp?: boolean}} options
+ * @param {{organizations, families}} options
  */
 export function aidFields(values = {}, options = {}) {
-  const { organizations = [], families = [], people = [] } = options;
+  const { organizations = [], families = [] } = options;
 
   return [
     radioCards({
@@ -339,14 +546,16 @@ export function aidFields(values = {}, options = {}) {
     }),
 
     fieldset({
-      legend: 'الجهة والمستفيد',
+      legend: 'الجهة المانحة والأسرة المستفيدة',
+      hint: 'تُسجَّل المساعدة باسم الأسرة، لا باسم فرد بعينه.',
       fields: [
         selectField({
           name: 'organizationId',
-          label: 'المؤسسة المانحة',
+          label: 'الجهة المانحة',
           options: organizations,
           value: values.organizationId,
           required: true,
+          hint: 'مؤسسة أو مبادرة أو شخص.',
         }),
         selectField({
           name: 'familyId',
@@ -355,24 +564,9 @@ export function aidFields(values = {}, options = {}) {
           value: values.familyId,
           required: true,
         }),
-        selectField({
-          name: 'displacedId',
-          label: 'المستلم',
-          options: people,
-          value: values.displacedId,
-          required: true,
-          hint: 'يتم تحديث القائمة حسب الأسرة المختارة.',
-          full: true,
-        }),
-      ],
-    }),
-
-    fieldset({
-      legend: 'تفاصيل المساعدة',
-      fields: [
         inputField({
           name: 'date',
-          label: 'تاريخ التسليم',
+          label: 'تاريخ التوزيع',
           type: 'date',
           value: toInputDate(values.date),
           required: true,
@@ -381,26 +575,20 @@ export function aidFields(values = {}, options = {}) {
           name: 'quantity',
           label: 'الكمية',
           value: values.quantity,
+          optional: true,
           placeholder: 'مثال: 1 طرد، 500 لتر',
-        }),
-        inputField({
-          name: 'value',
-          label: 'القيمة التقديرية (₪)',
-          type: 'number',
-          value: values.value,
-          mono: true,
-          inputMode: 'numeric',
-          attrs: 'min="0" step="5"',
         }),
       ],
     }),
 
     textareaField({
-      name: 'notes',
-      label: 'ملاحظات',
-      value: values.notes,
-      optional: true,
-      placeholder: 'تفاصيل إضافية عن المساعدة…',
+      name: 'description',
+      label: 'وصف المساعدة',
+      value: values.description,
+      required: true,
+      rows: 3,
+      placeholder: 'مثال: أدوات تنظيف مقدمة من جمعية تطوير بيت لاهيا',
+      hint: 'اكتب ما تم توزيعه فعلياً ومن قدّمه.',
     }),
   ].join('');
 }
@@ -505,16 +693,32 @@ export function campAdminFields(values = {}, { camps = [], isNew = true } = {}) 
   });
 }
 
-/* ---- Organization ------------------------------------------------------- */
+/* ---- Donor -------------------------------------------------------------- */
 
-/** Name and an optional responsible person — nothing else, by domain rule. */
+/**
+ * A donor may be an organisation, an initiative or a single person, so only
+ * the name is required. There is still no email, logo, website or address.
+ */
 export function organizationFields(values = {}) {
   return `
     ${inputField({
       name: 'name',
-      label: 'اسم المؤسسة',
+      label: 'اسم الجهة / المؤسسة',
       value: values.name,
       required: true,
+      full: true,
+      placeholder: 'مؤسسة أو مبادرة أو اسم شخص',
+    })}
+    ${inputField({
+      name: 'phone',
+      label: 'رقم الجوال',
+      type: 'tel',
+      value: values.phone,
+      optional: true,
+      mono: true,
+      inputMode: 'tel',
+      placeholder: '05xxxxxxxx',
+      attrs: 'maxlength="10"',
       full: true,
     })}
     ${inputField({
@@ -523,7 +727,7 @@ export function organizationFields(values = {}) {
       value: values.responsiblePerson,
       optional: true,
       full: true,
-      hint: 'لا يحتوي سجل المؤسسة على بريد أو هاتف أو عنوان.',
+      hint: 'لا يحتوي السجل على بريد أو عنوان أو موقع إلكتروني.',
     })}`;
 }
 
@@ -626,11 +830,10 @@ export function familySchema() {
 export function aidSchema() {
   return {
     type: [rules.required('نوع المساعدة')],
-    organizationId: [rules.required('المؤسسة المانحة')],
+    organizationId: [rules.required('الجهة المانحة')],
     familyId: [rules.required('الأسرة المستفيدة')],
-    displacedId: [rules.required('المستلم')],
-    date: [rules.required('تاريخ التسليم'), rules.pastDate('تاريخ التسليم')],
-    value: [rules.number({ min: 0, label: 'القيمة التقديرية' })],
+    date: [rules.required('تاريخ التوزيع'), rules.pastDate('تاريخ التوزيع')],
+    description: [rules.required('وصف المساعدة'), rules.minLength(5, 'وصف المساعدة')],
   };
 }
 
@@ -658,8 +861,12 @@ export function campAdminSchema({ isNew = true, isDuplicateEmail = () => false }
   };
 }
 
+/** Only the name is required; the phone is validated only when filled in. */
 export function organizationSchema() {
-  return { name: [rules.required('اسم المؤسسة'), rules.minLength(3, 'اسم المؤسسة')] };
+  return {
+    name: [rules.required('اسم الجهة'), rules.minLength(3, 'اسم الجهة')],
+    phone: [rules.phone('رقم الجوال')],
+  };
 }
 
 export function documentSchema({ requirePerson = false } = {}) {

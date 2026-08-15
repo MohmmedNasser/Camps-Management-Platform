@@ -6,7 +6,7 @@
  */
 
 import { esc, params, delegate } from '../utils/dom.js';
-import { formatDate, formatAge, formatNumber, formatCurrency, fileSize } from '../utils/format.js';
+import { formatDate, formatAge, formatNumber, fileSize } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
@@ -107,7 +107,6 @@ function missingView(session) {
 
 function view(session, { family, aid, documents }) {
   const isOwn = session.role === ROLES.DISPLACED;
-  const aidValue = aid.reduce((sum, record) => sum + Number(record.value || 0), 0);
   const head = family.head;
 
   return `
@@ -142,8 +141,9 @@ function view(session, { family, aid, documents }) {
 
     <div class="grid grid--4 u-mb-6">
       ${statCard({ label: 'عدد الأفراد', value: formatNumber(family.membersCount), iconName: 'family' })}
-      ${statCard({ label: 'الأطفال', value: formatNumber(family.childrenCount), iconName: 'users', tone: 'success' })}
-      ${statCard({ label: 'المساعدات المستلمة', value: formatNumber(aid.length), iconName: 'aid', meta: formatCurrency(aidValue) })}
+      ${statCard({ label: 'الأطفال أقل من 18 عامًا', value: formatNumber(family.childrenCount), iconName: 'users', tone: 'success' })}
+      ${statCard({ label: 'الأيتام', value: formatNumber(family.orphansCount), iconName: 'family', tone: 'warning' })}
+      ${statCard({ label: 'المساعدات المستلمة', value: formatNumber(aid.length), iconName: 'aid' })}
       ${statCard({ label: 'المستندات', value: formatNumber(documents.length), iconName: 'folder', href: pageUrl('documents.html') })}
     </div>
 
@@ -152,7 +152,9 @@ function view(session, { family, aid, documents }) {
         ${card({
           title: 'أفراد الأسرة',
           action: can('displaced:create')
-            ? `<a class="btn btn--ghost btn--sm" href="${pageUrl('displaced-create.html')}">إضافة فرد</a>`
+            ? `<a class="btn btn--ghost btn--sm" href="${pageUrl('displaced-create.html', {
+                familyId: family.id,
+              })}">إضافة فرد</a>`
             : '',
           flush: true,
           body: membersTable(family),
@@ -165,7 +167,10 @@ function view(session, { family, aid, documents }) {
             : '',
           flush: true,
           body: aid.length
-            ? `<div class="list">${aid.slice(0, 8).map(aidRow).join('')}</div>`
+            ? `<div class="list">${aid
+                .slice(0, 8)
+                .map((record) => aidRow(record, { linked: !isOwn }))
+                .join('')}</div>`
             : emptyState({
                 iconName: 'aid',
                 title: 'لا توجد مساعدات مسجلة',
@@ -239,11 +244,12 @@ function membersTable(family) {
       { key: 'nationalId', label: 'رقم الهوية', cell: (row) => cellMono(row.nationalId) },
       {
         key: 'health',
-        label: 'الحالة الصحية',
+        label: 'الحالة',
         cell: (row) =>
           [
             row.chronicDiseases ? badge('مرض مزمن', 'warning') : '',
             row.disability ? badge('إعاقة', 'error') : '',
+            row.isOrphan ? badge('يتيم', 'info') : '',
           ]
             .filter(Boolean)
             .join(' ') || '<span class="u-muted">—</span>',
@@ -272,17 +278,25 @@ function membersTable(family) {
   });
 }
 
-function aidRow(record) {
+/**
+ * A displaced person gets a read-only line; an administrator gets a link to
+ * the record. Aid detail is not part of the displaced person's interface.
+ */
+function aidRow(record, { linked = true } = {}) {
+  const inner = `
+    <span class="list__main">
+      <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
+      <span class="list__meta">${esc(formatDate(record.date))}${
+        record.quantity ? ` · ${esc(record.quantity)}` : ''
+      }</span>
+    </span>`;
+
+  if (!linked) return `<div class="list__row">${inner}</div>`;
+
   return `
     <a class="list__row" href="${pageUrl('aid-details.html', { id: record.id })}">
-      <span class="list__main">
-        <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
-        <span class="list__meta">${esc(record.personName)} · ${esc(formatDate(record.date))}</span>
-      </span>
-      <span class="list__side">
-        <span class="mono u-sm">${esc(formatCurrency(record.value))}</span>
-        ${icon('chevronLeft', { size: 16 })}
-      </span>
+      ${inner}
+      <span class="list__side">${icon('chevronLeft', { size: 16 })}</span>
     </a>`;
 }
 

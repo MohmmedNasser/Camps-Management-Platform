@@ -7,7 +7,7 @@
  */
 
 import { esc, delegate } from '../utils/dom.js';
-import { formatNumber, formatCurrency, formatDate } from '../utils/format.js';
+import { formatNumber, formatDate } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
@@ -75,7 +75,7 @@ function collect(session) {
     byMonth: select.displacedByMonth(session, 8),
     aidByType: select.aidByType(session),
     aidByOrganization: select.aidByOrganization(session),
-    aidValueByMonth: select.aidValueByMonth(session, 8),
+    aidCountByMonth: select.aidCountByMonth(session, 8),
     familySizes: select.familySizeDistribution(session),
     ages: select.ageDistribution(session),
     work: select.workStatusDistribution(session),
@@ -107,11 +107,11 @@ function view(data) {
       ${statCard({ label: 'المخيمات', value: formatNumber(stats.camps), iconName: 'tent', href: pageUrl('camps.html') })}
       ${statCard({ label: 'إجمالي النازحين', value: formatNumber(stats.displaced), iconName: 'users', href: pageUrl('displaced.html') })}
       ${statCard({ label: 'إجمالي الأسر', value: formatNumber(stats.families), iconName: 'family', tone: 'success', href: pageUrl('families.html') })}
-      ${statCard({ label: 'إجمالي المساعدات', value: formatNumber(stats.aid), iconName: 'aid', meta: formatCurrency(stats.aidValue) })}
+      ${statCard({ label: 'المساعدات الموزَّعة', value: formatNumber(stats.aid), iconName: 'aid', meta: `${formatNumber(stats.donors)} جهة مانحة` })}
       ${statCard({ label: 'ذوو الإعاقة', value: formatNumber(stats.disability), iconName: 'accessibility', tone: 'error' })}
       ${statCard({ label: 'الأمراض المزمنة', value: formatNumber(stats.chronic), iconName: 'heartPulse', tone: 'warning' })}
-      ${statCard({ label: 'الأطفال', value: formatNumber(stats.children), iconName: 'users' })}
-      ${statCard({ label: 'المستندات', value: formatNumber(stats.documents), iconName: 'folder' })}
+      ${statCard({ label: 'الأطفال أقل من 18 عامًا', value: formatNumber(stats.children), iconName: 'users' })}
+      ${statCard({ label: 'الأيتام', value: formatNumber(stats.orphans), iconName: 'family', tone: 'warning' })}
     </div>
 
     <div class="grid grid--2 u-mb-6">
@@ -127,7 +127,7 @@ function view(data) {
       })}
       ${chartCard({ id: 'chart-families', title: 'توزيع الأسر', subtitle: 'حسب عدد الأفراد' })}
       ${chartCard({ id: 'chart-aid', title: 'المساعدات حسب النوع', subtitle: 'عدد السجلات لكل نوع' })}
-      ${chartCard({ id: 'chart-aid-value', title: 'قيمة المساعدات شهرياً', subtitle: 'بالشيكل — آخر 8 أشهر' })}
+      ${chartCard({ id: 'chart-aid-month', title: 'المساعدات الموزَّعة شهرياً', subtitle: 'عدد عمليات التوزيع — آخر 8 أشهر' })}
     </div>
 
     <div class="grid grid--2 u-mb-6">
@@ -171,20 +171,20 @@ function view(data) {
 
     <div class="grid grid--2 u-mb-6">
       ${card({
-        title: 'المؤسسات المانحة',
-        action: `<a class="btn btn--ghost btn--sm" href="${pageUrl('organizations.html')}">إدارة المؤسسات</a>`,
+        title: 'الجهات المانحة',
+        action: `<a class="btn btn--ghost btn--sm" href="${pageUrl('organizations.html')}">إدارة الجهات</a>`,
         body: data.aidByOrganization.length
           ? barList(
               data.aidByOrganization.map((entry) => ({
                 label: entry.label,
                 value: entry.count,
-                display: `${entry.count} · ${formatCurrency(entry.total)}`,
+                display: `${entry.count} مساعدة`,
               }))
             )
           : emptyState({
               iconName: 'building',
               title: 'لا توجد مساعدات مسجلة',
-              text: 'ستظهر هنا حصة كل مؤسسة فور تسجيل المساعدات.',
+              text: 'ستظهر هنا حصة كل جهة مانحة فور تسجيل المساعدات.',
             }),
       })}
       ${card({
@@ -199,7 +199,7 @@ function view(data) {
                   <span class="list__meta">${esc(family.headName)} · ${esc(family.campName)}</span>
                 </span>
                 <span class="list__side">
-                  <span class="mono u-sm">${esc(formatCurrency(family.total))}</span>
+                  <span class="mono u-sm">${esc(`${family.count} مساعدة`)}</span>
                 </span>
               </a>`
               )
@@ -230,6 +230,8 @@ function campsTable(camps) {
       { key: 'displacedCount', label: 'النازحون', cell: (row) => cellMono(row.displacedCount) },
       { key: 'familiesCount', label: 'الأسر', cell: (row) => cellMono(row.familiesCount) },
       { key: 'aidCount', label: 'المساعدات', cell: (row) => cellMono(row.aidCount) },
+      { key: 'childrenCount', label: 'الأطفال', cell: (row) => cellMono(row.childrenCount) },
+      { key: 'orphansCount', label: 'الأيتام', cell: (row) => cellMono(row.orphansCount) },
       { key: 'disabilityCount', label: 'ذوو الإعاقة', cell: (row) => cellMono(row.disabilityCount) },
       { key: 'adminsCount', label: 'المسؤولون', cell: (row) => cellMono(row.adminsCount) },
       {
@@ -252,7 +254,7 @@ function draw(data) {
   genderDoughnut('chart-gender', { males: data.stats.males, females: data.stats.females });
   familySizeBar('chart-families', data.familySizes);
   aidTypeBar('chart-aid', data.aidByType);
-  monthlyLine('chart-aid-value', data.aidValueByMonth, 'قيمة المساعدات');
+  monthlyLine('chart-aid-month', data.aidCountByMonth, 'عدد المساعدات');
 
   delegate(document, 'click', '[data-print]', () => window.print());
 }

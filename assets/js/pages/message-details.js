@@ -114,12 +114,20 @@ function view(session, { message, sender, person, history }) {
 
   return `
     ${breadcrumb([
-      { label: isOwn ? 'رسائلي' : 'الرسائل', href: pageUrl('messages.html') },
+      { label: 'الرسائل', href: pageUrl('messages.html') },
       { label: message.subjectLabel },
     ])}
     ${pageHeader({
       title: message.subjectLabel,
-      description: `${isOwn ? 'أرسلتها' : `من ${message.senderName}`} ${formatRelative(message.createdAt)}`,
+      description: `${isOwn ? 'أرسلتها' : `من ${message.senderName}`} ${formatRelative(
+        message.createdAt
+      )} · ${formatDateTime(message.createdAt)}`,
+      actions: button({
+        label: 'العودة إلى الرسائل',
+        variant: 'secondary',
+        iconName: 'chevronRight',
+        href: pageUrl('messages.html'),
+      }),
     })}
 
     <div class="split">

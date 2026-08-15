@@ -5,16 +5,18 @@
  * localStorage on first run. When the backend lands, this file is deleted and
  * the same shapes come from Supabase.
  *
- * Integrity contract (asserted by store.validateSeed):
+ * Integrity contract (asserted by store.validateData):
  *   - every displaced.familyId resolves to a family
  *   - a family's head is a member of that family, in the same camp
- *   - every aid row references an existing organization and family/person
+ *   - every aid row references an existing organization and family
  *   - family.membersCount is derived at read time, never stored
+ *   - aid describes what was distributed; it carries no monetary value and no
+ *     individual recipient — the beneficiary is the family
  */
 
 import { ROLES, STATUS } from '../core/config.js';
 
-export const SEED_VERSION = 1;
+export const SEED_VERSION = 4;
 
 /* ---- Camps ------------------------------------------------------------ */
 
@@ -45,14 +47,20 @@ export const camps = [
   },
 ];
 
-/* ---- Organizations (name + optional responsible person only) ---------- */
+/* ---- Donors ------------------------------------------------------------
+   Name, plus an optional responsible person and an optional phone. A donor is
+   not always a formal organisation — it may be a local initiative or a single
+   person — so nothing beyond the name is required.
+   ---------------------------------------------------------------------- */
 
 export const organizations = [
-  { id: 'org-1', name: 'الهلال الأحمر الفلسطيني', responsiblePerson: 'د. سامي العطار' },
-  { id: 'org-2', name: 'وكالة الغوث (الأونروا)', responsiblePerson: 'أحمد الشوا' },
-  { id: 'org-3', name: 'جمعية الإغاثة الإنسانية', responsiblePerson: '' },
-  { id: 'org-4', name: 'مؤسسة الرحمة الخيرية', responsiblePerson: 'منى الحلبي' },
-  { id: 'org-5', name: 'برنامج الغذاء العالمي', responsiblePerson: '' },
+  { id: 'org-1', name: 'الهلال الأحمر الفلسطيني', responsiblePerson: 'د. سامي العطار', phone: '0599310110' },
+  { id: 'org-2', name: 'وكالة الغوث (الأونروا)', responsiblePerson: 'أحمد الشوا', phone: '' },
+  { id: 'org-3', name: 'جمعية تطوير بيت لاهيا', responsiblePerson: '', phone: '0597441802' },
+  { id: 'org-4', name: 'مؤسسة الرحمة الخيرية', responsiblePerson: 'منى الحلبي', phone: '0598220745' },
+  { id: 'org-5', name: 'برنامج الغذاء العالمي', responsiblePerson: '', phone: '' },
+  { id: 'org-6', name: 'الاتحاد الزراعي', responsiblePerson: 'زياد أبو عودة', phone: '0599876123' },
+  { id: 'org-7', name: 'مبادرة شباب المخيم', responsiblePerson: 'كريم أبو ندى', phone: '0567120934' },
 ];
 
 /* ---- Users ------------------------------------------------------------ */
@@ -167,9 +175,15 @@ export const families = [
 
 /* ---- Displaced people -------------------------------------------------- */
 
-/** Compact factory so 24 records stay readable and structurally identical. */
+/**
+ * Compact factory so the records stay readable and structurally identical.
+ *
+ * `isPregnant` / `isBreastfeeding` are attached only when the record is female,
+ * so a male file never shows "حامل: لا" and the "غير حامل" filter never sweeps
+ * every man in the camp into its results.
+ */
 function person(id, values) {
-  return {
+  const base = {
     id,
     fullName: '',
     fullNameEn: '',
@@ -189,7 +203,7 @@ function person(id, values) {
     area: '',
 
     campId: 'camp-1',
-    tentType: 'family_tent',
+    tentType: 'tarp_tent',
     originGovernorate: '',
     originCity: '',
     currentResidence: '',
@@ -197,6 +211,10 @@ function person(id, values) {
 
     chronicDiseases: '',
     disability: '',
+    isOrphan: false,
+
+    // isPregnant / isBreastfeeding are deliberately absent here — they are
+    // attached below, and only when the record is female.
 
     workStatus: 'unemployed',
     incomeSource: 'none',
@@ -208,6 +226,18 @@ function person(id, values) {
     createdAt: '2026-01-18',
     ...values,
   };
+
+  if (base.gender === 'female') {
+    return {
+      ...base,
+      isPregnant: Boolean(values.isPregnant),
+      isBreastfeeding: Boolean(values.isBreastfeeding),
+    };
+  }
+
+  delete base.isPregnant;
+  delete base.isBreastfeeding;
+  return base;
 }
 
 export const displaced = [
@@ -228,7 +258,7 @@ export const displaced = [
     city: 'خان يونس',
     area: 'حي الأمل',
     campId: 'camp-1',
-    tentType: 'family_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'gaza',
     originCity: 'غزة',
     currentResidence: 'مخيم النور - القطاع الشمالي',
@@ -249,6 +279,7 @@ export const displaced = [
     birthDate: '1989-07-22',
     maritalStatus: 'married',
     nationalId: '402318766',
+    isBreastfeeding: true,
     unrwaNumber: '1120454',
     phone: '0592345672',
     governorate: 'khan_younis',
@@ -323,7 +354,7 @@ export const displaced = [
     city: 'خان يونس',
     area: 'المنطقة الغربية',
     campId: 'camp-1',
-    tentType: 'shelter_unit',
+    tentType: 'prefab_tent',
     originGovernorate: 'north_gaza',
     originCity: 'بيت لاهيا',
     currentResidence: 'مخيم النور - القطاع الأوسط',
@@ -344,12 +375,13 @@ export const displaced = [
     birthDate: '1983-02-18',
     maritalStatus: 'married',
     nationalId: '401556235',
+    isPregnant: true,
     phone: '0592345676',
     governorate: 'khan_younis',
     city: 'خان يونس',
     area: 'المنطقة الغربية',
     campId: 'camp-1',
-    tentType: 'shelter_unit',
+    tentType: 'prefab_tent',
     originGovernorate: 'north_gaza',
     originCity: 'بيت لاهيا',
     currentResidence: 'مخيم النور - القطاع الأوسط',
@@ -369,7 +401,7 @@ export const displaced = [
     nationalId: '411556236',
     phone: '0592345677',
     campId: 'camp-1',
-    tentType: 'shelter_unit',
+    tentType: 'prefab_tent',
     governorate: 'khan_younis',
     city: 'خان يونس',
     area: 'المنطقة الغربية',
@@ -397,7 +429,7 @@ export const displaced = [
     city: 'خان يونس',
     area: 'حي الأمل',
     campId: 'camp-1',
-    tentType: 'family_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'gaza',
     originCity: 'الشجاعية',
     currentResidence: 'مخيم النور - القطاع الجنوبي',
@@ -425,6 +457,7 @@ export const displaced = [
     originCity: 'الشجاعية',
     currentResidence: 'مخيم النور - القطاع الجنوبي',
     displacementDate: '2023-11-04',
+    isOrphan: true,
     workStatus: 'student',
     familyId: 'FAM-000003',
     relationship: 'daughter',
@@ -445,6 +478,7 @@ export const displaced = [
     currentResidence: 'مخيم النور - القطاع الجنوبي',
     displacementDate: '2023-11-04',
     disability: 'إعاقة بصرية',
+    isOrphan: true,
     workStatus: 'student',
     familyId: 'FAM-000003',
     relationship: 'son',
@@ -468,7 +502,7 @@ export const displaced = [
     city: 'دير البلح',
     area: 'المخيم الجديد',
     campId: 'camp-2',
-    tentType: 'family_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'gaza',
     originCity: 'الرمال',
     currentResidence: 'مخيم الرحمة - البلوك أ',
@@ -487,6 +521,7 @@ export const displaced = [
     birthDate: '1986-04-11',
     maritalStatus: 'married',
     nationalId: '403661299',
+    isPregnant: true,
     phone: '0592345682',
     governorate: 'deir_albalah',
     city: 'دير البلح',
@@ -538,7 +573,7 @@ export const displaced = [
     city: 'دير البلح',
     area: 'شارع صلاح الدين',
     campId: 'camp-2',
-    tentType: 'individual_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'north_gaza',
     originCity: 'جباليا',
     currentResidence: 'مخيم الرحمة - البلوك ب',
@@ -557,7 +592,7 @@ export const displaced = [
     birthDate: '2016-08-14',
     nationalId: '415223419',
     campId: 'camp-2',
-    tentType: 'individual_tent',
+    tentType: 'tarp_tent',
     governorate: 'deir_albalah',
     city: 'دير البلح',
     area: 'شارع صلاح الدين',
@@ -586,7 +621,7 @@ export const displaced = [
     city: 'دير البلح',
     area: 'المنطقة الشرقية',
     campId: 'camp-2',
-    tentType: 'shared_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'khan_younis',
     originCity: 'عبسان',
     currentResidence: 'مخيم الرحمة - البلوك ج',
@@ -611,7 +646,7 @@ export const displaced = [
     city: 'دير البلح',
     area: 'المنطقة الشرقية',
     campId: 'camp-2',
-    tentType: 'shared_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'khan_younis',
     originCity: 'عبسان',
     currentResidence: 'مخيم الرحمة - البلوك ج',
@@ -631,7 +666,7 @@ export const displaced = [
     nationalId: '408441079',
     phone: '0592345688',
     campId: 'camp-2',
-    tentType: 'shared_tent',
+    tentType: 'tarp_tent',
     governorate: 'deir_albalah',
     city: 'دير البلح',
     area: 'المنطقة الشرقية',
@@ -660,7 +695,7 @@ export const displaced = [
     city: 'رفح',
     area: 'تل السلطان',
     campId: 'camp-3',
-    tentType: 'family_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'gaza',
     originCity: 'الزيتون',
     currentResidence: 'مخيم الأمل - القسم الأول',
@@ -679,6 +714,7 @@ export const displaced = [
     birthDate: '1992-03-16',
     maritalStatus: 'married',
     nationalId: '406990234',
+    isBreastfeeding: true,
     phone: '0592345690',
     governorate: 'rafah',
     city: 'رفح',
@@ -730,7 +766,7 @@ export const displaced = [
     city: 'رفح',
     area: 'الشابورة',
     campId: 'camp-3',
-    tentType: 'family_tent',
+    tentType: 'tarp_tent',
     originGovernorate: 'north_gaza',
     originCity: 'بيت حانون',
     currentResidence: 'مخيم الأمل - القسم الثاني',
@@ -760,6 +796,7 @@ export const displaced = [
     originCity: 'بيت حانون',
     currentResidence: 'مخيم الأمل - القسم الثاني',
     displacementDate: '2023-10-25',
+    isOrphan: true,
     workStatus: 'employed',
     incomeSource: 'salary',
     monthlyIncome: 1200,
@@ -782,14 +819,96 @@ export const displaced = [
     currentResidence: 'مخيم الأمل - القسم الثاني',
     displacementDate: '2023-10-25',
     chronicDiseases: 'ربو',
+    isOrphan: true,
     workStatus: 'student',
     familyId: 'FAM-000008',
     relationship: 'son',
     createdAt: '2026-08-04',
   }),
+
+  /* --- Infants and toddlers (exercise the cumulative age bands) --- */
+  person('d-25', {
+    fullName: 'لمى أحمد الشريف',
+    fullNameEn: 'Lama Ahmad Al-Sharif',
+    gender: 'female',
+    birthDate: '2026-02-10',
+    nationalId: '412318769',
+    campId: 'camp-1',
+    governorate: 'khan_younis',
+    city: 'خان يونس',
+    area: 'حي الأمل',
+    originGovernorate: 'gaza',
+    originCity: 'غزة',
+    currentResidence: 'مخيم النور - القطاع الشمالي',
+    displacementDate: '2023-10-16',
+    familyId: 'FAM-000001',
+    relationship: 'daughter',
+    createdAt: '2026-02-12',
+  }),
+  person('d-26', {
+    fullName: 'آدم يوسف النجار',
+    fullNameEn: 'Adam Yousef Al-Najjar',
+    gender: 'male',
+    birthDate: '2025-03-05',
+    nationalId: '411556237',
+    campId: 'camp-1',
+    tentType: 'prefab_tent',
+    governorate: 'khan_younis',
+    city: 'خان يونس',
+    area: 'المنطقة الغربية',
+    originGovernorate: 'north_gaza',
+    originCity: 'بيت لاهيا',
+    currentResidence: 'مخيم النور - القطاع الأوسط',
+    displacementDate: '2023-10-21',
+    chronicDiseases: 'ربو',
+    familyId: 'FAM-000002',
+    relationship: 'son',
+    createdAt: '2025-03-08',
+  }),
+  person('d-27', {
+    fullName: 'جنى إبراهيم قاسم',
+    fullNameEn: 'Jana Ibrahim Qasem',
+    gender: 'female',
+    birthDate: '2024-04-20',
+    nationalId: '413661301',
+    campId: 'camp-2',
+    governorate: 'deir_albalah',
+    city: 'دير البلح',
+    area: 'المخيم الجديد',
+    originGovernorate: 'gaza',
+    originCity: 'الرمال',
+    currentResidence: 'مخيم الرحمة - البلوك أ',
+    displacementDate: '2023-10-13',
+    familyId: 'FAM-000004',
+    relationship: 'daughter',
+    createdAt: '2024-04-25',
+  }),
+  person('d-28', {
+    fullName: 'تالا عمر الغول',
+    fullNameEn: 'Tala Omar Al-Ghoul',
+    gender: 'female',
+    birthDate: '2026-05-01',
+    nationalId: '416990236',
+    campId: 'camp-3',
+    governorate: 'rafah',
+    city: 'رفح',
+    area: 'تل السلطان',
+    originGovernorate: 'gaza',
+    originCity: 'الزيتون',
+    currentResidence: 'مخيم الأمل - القسم الأول',
+    displacementDate: '2023-10-19',
+    familyId: 'FAM-000007',
+    relationship: 'daughter',
+    createdAt: '2026-05-04',
+  }),
 ];
 
-/* ---- Aid records ------------------------------------------------------- */
+
+/* ---- Aid records -------------------------------------------------------
+   A record of what was actually distributed, by whom, to which family and
+   when. Aid is not a financial transaction: there is no value, no price and
+   no individual recipient.
+   ---------------------------------------------------------------------- */
 
 export const aid = [
   {
@@ -797,13 +916,10 @@ export const aid = [
     type: 'food',
     organizationId: 'org-5',
     familyId: 'FAM-000001',
-    displacedId: 'd-1',
     campId: 'camp-1',
     date: '2026-07-28',
     quantity: '1 طرد',
-    value: 220,
-    notes: 'طرد غذائي شهري يكفي أسرة من ٤ أفراد.',
-    receiptImage: '',
+    description: 'طرد غذائي شهري مقدم من برنامج الغذاء العالمي يكفي أسرة من أربعة أفراد.',
     createdBy: 'u-admin-1',
   },
   {
@@ -811,13 +927,10 @@ export const aid = [
     type: 'financial',
     organizationId: 'org-1',
     familyId: 'FAM-000003',
-    displacedId: 'd-8',
     campId: 'camp-1',
     date: '2026-07-22',
     quantity: 'دفعة واحدة',
-    value: 600,
-    notes: 'مساعدة نقدية طارئة للأسر التي تعيلها نساء.',
-    receiptImage: '',
+    description: 'مساعدة نقدية طارئة للأسر التي تعيلها نساء، مقدمة من الهلال الأحمر الفلسطيني.',
     createdBy: 'u-admin-1',
   },
   {
@@ -825,13 +938,10 @@ export const aid = [
     type: 'medicine',
     organizationId: 'org-1',
     familyId: 'FAM-000002',
-    displacedId: 'd-5',
     campId: 'camp-1',
     date: '2026-07-19',
     quantity: 'علاج شهر',
-    value: 180,
-    notes: 'أدوية قصور كلوي.',
-    receiptImage: '',
+    description: 'أدوية قصور كلوي لمدة شهر مقدمة من الهلال الأحمر الفلسطيني.',
     createdBy: 'u-admin-1',
   },
   {
@@ -839,13 +949,10 @@ export const aid = [
     type: 'blankets',
     organizationId: 'org-3',
     familyId: 'FAM-000001',
-    displacedId: 'd-1',
     campId: 'camp-1',
     date: '2026-06-30',
     quantity: '4 بطانيات',
-    value: 160,
-    notes: '',
-    receiptImage: '',
+    description: 'بطانيات شتوية مقدمة من جمعية تطوير بيت لاهيا.',
     createdBy: 'u-admin-1',
   },
   {
@@ -853,27 +960,32 @@ export const aid = [
     type: 'water',
     organizationId: 'org-3',
     familyId: 'FAM-000002',
-    displacedId: 'd-5',
     campId: 'camp-1',
     date: '2026-06-25',
     quantity: '500 لتر',
-    value: 90,
-    notes: 'تعبئة أسبوعية لخزان الأسرة.',
-    receiptImage: '',
+    description: 'تعبئة أسبوعية لخزان الأسرة من جمعية تطوير بيت لاهيا.',
+    createdBy: 'u-admin-1',
+  },
+  {
+    id: 'aid-15',
+    type: 'cleaning',
+    organizationId: 'org-3',
+    familyId: 'FAM-000003',
+    campId: 'camp-1',
+    date: '2026-06-18',
+    quantity: '1 حقيبة',
+    description: 'أدوات تنظيف مقدمة من جمعية تطوير بيت لاهيا.',
     createdBy: 'u-admin-1',
   },
   {
     id: 'aid-6',
     type: 'food',
-    organizationId: 'org-2',
+    organizationId: 'org-6',
     familyId: 'FAM-000004',
-    displacedId: 'd-11',
     campId: 'camp-2',
     date: '2026-07-27',
     quantity: '1 طرد',
-    value: 240,
-    notes: '',
-    receiptImage: '',
+    description: 'طرد غذائي مقدم من الاتحاد الزراعي.',
     createdBy: 'u-admin-2',
   },
   {
@@ -881,13 +993,10 @@ export const aid = [
     type: 'clothes',
     organizationId: 'org-4',
     familyId: 'FAM-000005',
-    displacedId: 'd-14',
     campId: 'camp-2',
     date: '2026-07-15',
     quantity: '5 قطع',
-    value: 130,
-    notes: 'ملابس أطفال.',
-    receiptImage: '',
+    description: 'ملابس أطفال مقدمة من مؤسسة الرحمة الخيرية.',
     createdBy: 'u-admin-2',
   },
   {
@@ -895,27 +1004,21 @@ export const aid = [
     type: 'medical',
     organizationId: 'org-1',
     familyId: 'FAM-000006',
-    displacedId: 'd-16',
     campId: 'camp-2',
     date: '2026-07-11',
     quantity: 'كشف + فحوصات',
-    value: 320,
-    notes: 'متابعة حالة قلب.',
-    receiptImage: '',
+    description: 'كشف طبي وفحوصات متابعة لحالة قلب، مقدمة من الهلال الأحمر الفلسطيني.',
     createdBy: 'u-admin-2',
   },
   {
     id: 'aid-9',
     type: 'cleaning',
-    organizationId: 'org-3',
+    organizationId: 'org-7',
     familyId: 'FAM-000004',
-    displacedId: 'd-11',
     campId: 'camp-2',
     date: '2026-06-28',
     quantity: '1 حقيبة',
-    value: 75,
-    notes: '',
-    receiptImage: '',
+    description: 'أدوات تنظيف مقدمة من مبادرة شباب المخيم.',
     createdBy: 'u-admin-2',
   },
   {
@@ -923,13 +1026,10 @@ export const aid = [
     type: 'household',
     organizationId: 'org-4',
     familyId: 'FAM-000006',
-    displacedId: 'd-16',
     campId: 'camp-2',
     date: '2026-06-14',
     quantity: 'طقم أواني',
-    value: 210,
-    notes: '',
-    receiptImage: '',
+    description: 'طقم أواني منزلية مقدم من مؤسسة الرحمة الخيرية.',
     createdBy: 'u-admin-2',
   },
   {
@@ -937,13 +1037,10 @@ export const aid = [
     type: 'food',
     organizationId: 'org-5',
     familyId: 'FAM-000007',
-    displacedId: 'd-19',
     campId: 'camp-3',
     date: '2026-07-26',
     quantity: '1 طرد',
-    value: 220,
-    notes: '',
-    receiptImage: '',
+    description: 'طرد غذائي شهري مقدم من برنامج الغذاء العالمي.',
     createdBy: 'u-admin-3',
   },
   {
@@ -951,13 +1048,10 @@ export const aid = [
     type: 'financial',
     organizationId: 'org-2',
     familyId: 'FAM-000008',
-    displacedId: 'd-22',
     campId: 'camp-3',
     date: '2026-07-20',
     quantity: 'دفعة واحدة',
-    value: 750,
-    notes: 'مساعدة نقدية لكبار السن وذوي الإعاقة.',
-    receiptImage: '',
+    description: 'مساعدة نقدية لكبار السن وذوي الإعاقة مقدمة من وكالة الغوث.',
     createdBy: 'u-admin-3',
   },
   {
@@ -965,13 +1059,10 @@ export const aid = [
     type: 'medicine',
     organizationId: 'org-1',
     familyId: 'FAM-000008',
-    displacedId: 'd-24',
     campId: 'camp-3',
     date: '2026-07-05',
     quantity: 'بخاخ + علاج',
-    value: 95,
-    notes: 'علاج ربو للأطفال.',
-    receiptImage: '',
+    description: 'علاج ربو للأطفال مقدم من الهلال الأحمر الفلسطيني.',
     createdBy: 'u-admin-3',
   },
   {
@@ -979,13 +1070,10 @@ export const aid = [
     type: 'other',
     organizationId: 'org-4',
     familyId: 'FAM-000007',
-    displacedId: 'd-19',
     campId: 'camp-3',
     date: '2026-06-09',
     quantity: '2 مرتبة',
-    value: 180,
-    notes: 'مراتب إسفنجية.',
-    receiptImage: '',
+    description: 'مراتب إسفنجية مقدمة من مؤسسة الرحمة الخيرية.',
     createdBy: 'u-admin-3',
   },
 ];

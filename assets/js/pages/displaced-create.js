@@ -5,11 +5,11 @@
  * registered twice, or in two camps.
  */
 
-import { qs, esc, delegate } from '../utils/dom.js';
+import { qs, esc, params, delegate } from '../utils/dom.js';
 import { mountShell } from '../ui/layout.js';
 import { button, alert, breadcrumb, pageHeader } from '../ui/components.js';
-import { bindForm, setFieldError } from '../ui/form.js';
-import { displacedFields, displacedSchema } from '../ui/record-forms.js';
+import { bindForm, setFieldError, bindMaternityFields } from '../ui/form.js';
+import { displacedFields, displacedSchema, maternityFrom } from '../ui/record-forms.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import * as store from '../core/store.js';
@@ -22,7 +22,18 @@ if (shell) init(shell);
 function init({ session, content }) {
   const camps = select.campOptions(session);
   const families = select.familyOptions(session.campId);
-  const defaults = { campId: session.campId, relationship: 'head', tentType: 'family_tent' };
+
+  // Adding one person to a family that already exists. A brand-new family is
+  // registered with all its members at once from family-create.html.
+  const { familyId } = params();
+  const preselected = familyId && families.some((option) => option.value === familyId) ? familyId : '';
+
+  const defaults = {
+    campId: session.campId,
+    relationship: preselected ? 'son' : 'head',
+    familyId: preselected,
+    tentType: 'tarp_tent',
+  };
 
   content.innerHTML = `
     ${breadcrumb([
@@ -31,13 +42,15 @@ function init({ session, content }) {
     ])}
     ${pageHeader({
       title: 'إضافة نازح',
-      description: `سيتم تسجيل النازح في ${session.campLabel}.`,
+      description: preselected
+        ? `سيتم إضافة الفرد إلى الأسرة ${preselected} في ${session.campLabel}.`
+        : `سيتم تسجيل النازح في ${session.campLabel}.`,
     })}
 
     ${alert({
       variant: 'info',
       title: 'قبل البدء',
-      text: 'رقم الهوية هو المعرّف الوحيد لمنع التسجيل المكرر — لا يوجد رقم ملف أو رقم خيمة في النظام.',
+      text: 'رقم الهوية هو المعرّف الوحيد لمنع التسجيل المكرر — لا يوجد رقم ملف أو رقم خيمة في النظام. لتسجيل أسرة جديدة بكامل أفرادها استخدم صفحة إضافة أسرة.',
     })}
 
     <form class="form u-mt-5" id="displaced-form" novalidate>
@@ -49,6 +62,7 @@ function init({ session, content }) {
     </form>`;
 
   const form = qs('#displaced-form', content);
+  bindMaternityFields(form);
 
   // A locked camp select posts nothing; keep the value available on submit.
   const campSelect = qs('#campId', form);
@@ -74,6 +88,8 @@ function init({ session, content }) {
         ...values,
         campId,
         monthlyIncome: Number(values.monthlyIncome || 0),
+        isOrphan: Boolean(values.isOrphan),
+        ...maternityFrom(values),
         status: STATUS.APPROVED,
         createdAt: new Date().toISOString(),
       });

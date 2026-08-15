@@ -69,13 +69,13 @@ export const NATIONALITIES = [
   { value: 'other', label: 'أخرى' },
 ];
 
-/** Tent type — the platform stores type, never a tent or caravan number. */
+/**
+ * Shelter type — the platform stores type, never a tent, caravan or file
+ * number. The domain recognises exactly these two.
+ */
 export const TENT_TYPES = [
-  { value: 'family_tent', label: 'خيمة عائلية' },
-  { value: 'individual_tent', label: 'خيمة فردية' },
-  { value: 'shared_tent', label: 'خيمة مشتركة' },
-  { value: 'shelter_unit', label: 'وحدة إيواء' },
-  { value: 'classroom', label: 'غرفة صفية' },
+  { value: 'tarp_tent', label: 'خيمة شادر' },
+  { value: 'prefab_tent', label: 'خيمة جاهزة' },
 ];
 
 export const GOVERNORATES = [
@@ -150,6 +150,51 @@ export const MESSAGE_SUBJECTS = [
   { value: 'other', label: 'موضوع آخر' },
 ];
 
+/* ---- Filter vocabularies ----------------------------------------------- */
+
+/**
+ * Cumulative age bands, not disjoint groups: "أقل من سنتين" includes infants
+ * under one. `max` is an exclusive upper bound in whole years.
+ */
+export const AGE_BANDS = [
+  { value: 'under_1', label: 'أقل من سنة', max: 1 },
+  { value: 'under_2', label: 'أقل من سنتين', max: 2 },
+  { value: 'under_3', label: 'أقل من 3 سنوات', max: 3 },
+];
+
+export const YES_NO = [
+  { value: 'yes', label: 'نعم' },
+  { value: 'no', label: 'لا' },
+];
+
+export const CHRONIC_FILTER = [
+  { value: 'yes', label: 'يوجد مرض مزمن' },
+  { value: 'no', label: 'لا يوجد مرض مزمن' },
+];
+
+export const ORPHAN_FILTER = [
+  { value: 'yes', label: 'يتيم' },
+  { value: 'no', label: 'غير يتيم' },
+];
+
+export const BREASTFEEDING_FILTER = [
+  { value: 'yes', label: 'مرضعة' },
+  { value: 'no', label: 'غير مرضعة' },
+];
+
+export const PREGNANT_FILTER = [
+  { value: 'yes', label: 'حامل' },
+  { value: 'no', label: 'غير حامل' },
+];
+
+/** Family size buckets; `max: null` means "and above". */
+export const FAMILY_SIZES = [
+  { value: 'size_1', label: 'فرد واحد', min: 1, max: 1 },
+  { value: 'size_2_3', label: '2–3 أفراد', min: 2, max: 3 },
+  { value: 'size_4_5', label: '4–5 أفراد', min: 4, max: 5 },
+  { value: 'size_6_plus', label: '6 أفراد فأكثر', min: 6, max: null },
+];
+
 /* ---- Lookup helper ---------------------------------------------------- */
 
 /** Resolve an enum value to its Arabic label. */
@@ -210,7 +255,9 @@ export const PAGE_ACCESS = {
   'family-details.html': [ROLES.SUPER_ADMIN, ROLES.CAMP_ADMIN, ROLES.DISPLACED],
   'family-create.html': [ROLES.CAMP_ADMIN],
   'aid.html': [ROLES.SUPER_ADMIN, ROLES.CAMP_ADMIN, ROLES.DISPLACED],
-  'aid-details.html': [ROLES.SUPER_ADMIN, ROLES.CAMP_ADMIN, ROLES.DISPLACED],
+  // A displaced person reads their aid history as a plain list; there is no
+  // per-record detail screen for them.
+  'aid-details.html': [ROLES.SUPER_ADMIN, ROLES.CAMP_ADMIN],
   'aid-create.html': [ROLES.CAMP_ADMIN],
   'aid-edit.html': [ROLES.CAMP_ADMIN],
   'organizations.html': [ROLES.SUPER_ADMIN, ROLES.CAMP_ADMIN],

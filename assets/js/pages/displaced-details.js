@@ -6,18 +6,18 @@
  */
 
 import { esc, params, delegate } from '../utils/dom.js';
+// formatCurrency is for the monthly income only — aid carries no value.
 import {
   formatDate,
   formatAge,
   formatPhone,
-  formatCurrency,
   formatNumber,
+  formatCurrency,
   fileSize,
 } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
-  card,
   badge,
   statusBadge,
   emptyState,
@@ -68,9 +68,9 @@ async function init({ session, content }) {
       return;
     }
 
-    content.innerHTML = view(session, data);
+    content.innerHTML = view(data);
     initTabs(content);
-    wire(content, session, data);
+    wire(content, data);
   } catch (error) {
     console.error(error);
     content.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -84,7 +84,8 @@ function collect(id) {
   return {
     person,
     family: person.familyId ? select.familyWithStats(person.familyId) : null,
-    aid: select.searchAid({ displacedId: id }),
+    // Aid is distributed to the family, so this is the family's history.
+    aid: person.familyId ? select.aidForFamily(person.familyId) : [],
     documents: store.documents
       .list((row) => row.displacedId === id)
       .map(select.documentRow),
@@ -107,10 +108,13 @@ function notFoundView() {
 
 /* ---- Header -------------------------------------------------------------- */
 
-function header(session, { person, campName }) {
+function header({ person, campName }) {
   const chips = [
     person.chronicDiseases ? badge('مرض مزمن', 'warning') : '',
     person.disability ? badge('إعاقة', 'error') : '',
+    person.isOrphan ? badge('يتيم', 'info') : '',
+    person.isPregnant ? badge('حامل', 'success') : '',
+    person.isBreastfeeding ? badge('مرضعة', 'success') : '',
   ]
     .filter(Boolean)
     .join('');
@@ -182,6 +186,13 @@ function personalPanel(person) {
     definition('المحافظة', labelOf(GOVERNORATES, person.governorate)),
     definition('المدينة', person.city),
     definition('الحي / المنطقة', person.area),
+    definition('يتيم', person.isOrphan ? 'نعم' : 'لا'),
+    // Maternity is not a yes/no question for a male record.
+    definition('حامل', person.gender === 'female' ? (person.isPregnant ? 'نعم' : 'لا') : 'لا ينطبق'),
+    definition(
+      'مرضعة',
+      person.gender === 'female' ? (person.isBreastfeeding ? 'نعم' : 'لا') : 'لا ينطبق'
+    ),
   ]);
 }
 
@@ -197,6 +208,7 @@ function displacementPanel(person, campName) {
   ]);
 }
 
+/** Chronic diseases and disability only — the domain recognises nothing else. */
 function healthPanel(person) {
   const empty = !person.chronicDiseases && !person.disability;
   if (empty) {
@@ -259,7 +271,8 @@ function familyPanel(person, family) {
       definition('رقم الأسرة', family.id, { mono: true }),
       definition('رب الأسرة', family.headName),
       definition('صلة القرابة', labelOf(RELATIONSHIPS, person.relationship)),
-      definition('عدد الأفراد', formatNumber(family.membersCount)),
+      definition('عدد أفراد الأسرة', formatNumber(family.membersCount)),
+      definition('الأطفال أقل من 18 عامًا', formatNumber(family.childrenCount)),
     ])}
     <div class="u-mt-5">
       <div class="row row--between u-mb-3">
@@ -272,26 +285,34 @@ function familyPanel(person, family) {
     </div>`;
 }
 
+/** Aid belongs to the family, so this panel shows the family's history. */
 function aidPanel(person, rows) {
   if (!rows.length) {
     return emptyState({
       iconName: 'aid',
       title: 'لا توجد مساعدات مسجلة',
-      text: 'ستظهر هنا كل مساعدة تُسجَّل باسم هذا النازح.',
-      actions: can('aid:create')
-        ? button({
-            label: 'تسجيل مساعدة',
-            variant: 'primary',
-            iconName: 'plus',
-            href: pageUrl('aid-create.html', { displacedId: person.id, familyId: person.familyId }),
-          })
-        : '',
+      text: person.familyId
+        ? 'ستظهر هنا كل مساعدة تُوزَّع على أسرة هذا النازح.'
+        : 'المساعدات تُسجَّل باسم الأسرة، وهذا النازح غير مرتبط بأي أسرة بعد.',
+      actions:
+        can('aid:create') && person.familyId
+          ? button({
+              label: 'تسجيل مساعدة',
+              variant: 'primary',
+              iconName: 'plus',
+              href: pageUrl('aid-create.html', { familyId: person.familyId }),
+            })
+          : '',
     });
   }
 
-  return `<div class="list">${rows
-    .map(
-      (record) => `
+  return `
+    <p class="u-sm u-secondary u-mb-3">تُوزَّع المساعدات على الأسرة ${esc(
+      person.familyId
+    )} ولا تُسجَّل باسم فرد بعينه.</p>
+    <div class="list">${rows
+      .map(
+        (record) => `
       <a class="list__row" href="${pageUrl('aid-details.html', { id: record.id })}">
         <span class="list__main">
           <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
@@ -299,13 +320,10 @@ function aidPanel(person, rows) {
             record.quantity ? ` · ${esc(record.quantity)}` : ''
           }</span>
         </span>
-        <span class="list__side">
-          <span class="mono u-sm">${esc(formatCurrency(record.value))}</span>
-          ${icon('chevronLeft', { size: 16 })}
-        </span>
+        <span class="list__side">${icon('chevronLeft', { size: 16 })}</span>
       </a>`
-    )
-    .join('')}</div>`;
+      )
+      .join('')}</div>`;
 }
 
 function documentsPanel(person, rows) {
@@ -343,7 +361,7 @@ function documentsPanel(person, rows) {
 
 /* ---- View ----------------------------------------------------------------- */
 
-function view(session, data) {
+function view(data) {
   const { person, family, aid, documents, campName } = data;
 
   const items = [
@@ -357,7 +375,7 @@ function view(session, data) {
   ];
 
   return `
-    ${header(session, data)}
+    ${header(data)}
 
     <section class="card">
       <div class="card__body">
@@ -375,7 +393,7 @@ function view(session, data) {
     </section>`;
 }
 
-function wire(content, session, { person }) {
+function wire(content, { person }) {
   delegate(content, 'click', '[data-delete]', async () => {
     const ok = await confirmDialog({
       title: 'حذف سجل النازح',

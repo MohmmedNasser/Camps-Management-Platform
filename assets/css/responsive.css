@@ -67,6 +67,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .filters__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .radio-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -79,15 +83,13 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .toolbar {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .toolbar__row {
-    flex: 1;
-    max-width: 520px;
+  /*
+   * The toolbar stays a column at every width: the filter panel belongs on its
+   * own row *below* the search row, never beside it. Only the search box is
+   * capped, so the row reads [بحث…] [فلترة] [إجراءات] and the panel opens under it.
+   */
+  .toolbar__row .input-wrap {
+    max-width: 480px;
   }
 
   /* Modal becomes a centered dialog */
@@ -189,6 +191,10 @@
   }
 
   .filters {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .filters__fields {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 

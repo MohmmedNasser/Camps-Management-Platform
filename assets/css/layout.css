@@ -470,6 +470,35 @@
   gap: var(--space-4);
 }
 
+/*
+ * Two-column detail layout. The base is a single column with a real gap —
+ * without it the main column and the aside butt together on every screen
+ * below 1024px. `responsive.css` promotes it to a grid from there up.
+ */
+.split {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/*
+ * Vertical rhythm between adjacent blocks a page drops straight into its
+ * container. `.stack` / `.grid` / `.split` own the spacing of what they wrap;
+ * this covers the rest, so no page needs its own margin.
+ */
+.page > .card + .card,
+.page > .card + .split,
+.page > .card + .grid,
+.page > .card + .stack,
+.page > .split + .card,
+.page > .grid + .card,
+.page > .stack + .card,
+.page > .alert + .card,
+.page > .alert + .split,
+.page > .alert + .grid {
+  margin-block-start: var(--space-5);
+}
+
 .row {
   display: flex;
   align-items: center;

@@ -15,8 +15,13 @@ import {
   errorState,
   skeletonForm,
 } from '../ui/components.js';
-import { bindForm, setFieldError } from '../ui/form.js';
-import { displacedFields, displacedSchema, formSummary } from '../ui/record-forms.js';
+import { bindForm, setFieldError, bindMaternityFields } from '../ui/form.js';
+import {
+  displacedFields,
+  displacedSchema,
+  formSummary,
+  maternityFrom,
+} from '../ui/record-forms.js';
 import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
@@ -84,6 +89,8 @@ function render({ session, content, person }) {
     </form>`;
 
   const form = qs('#displaced-form', content);
+  bindMaternityFields(form);
+
   const campSelect = qs('#campId', form);
   if (campSelect && campSelect.disabled) campSelect.value = person.campId;
 
@@ -103,6 +110,8 @@ function render({ session, content, person }) {
         ...values,
         campId: values.campId || person.campId,
         monthlyIncome: Number(values.monthlyIncome || 0),
+        isOrphan: Boolean(values.isOrphan),
+        ...maternityFrom(values),
       });
 
       if (values.familyId && values.relationship === 'head') {

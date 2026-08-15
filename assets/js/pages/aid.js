@@ -8,7 +8,7 @@
  */
 
 import { esc, delegate, params, setParams, qs } from '../utils/dom.js';
-import { formatDate, formatCurrency, formatNumber } from '../utils/format.js';
+import { formatDate, formatNumber } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
@@ -61,7 +61,7 @@ function init({ session, content }) {
     },
     {
       name: 'organizationId',
-      label: 'المؤسسة المانحة',
+      label: 'الجهة المانحة',
       options: select.organizationOptions(),
       value: state.organizationId,
     },
@@ -81,8 +81,8 @@ function init({ session, content }) {
     ${pageHeader({
       title: isOwn ? 'مساعداتي' : 'المساعدات',
       description: isOwn
-        ? 'سجل المساعدات التي استلمتها أسرتك من المؤسسات المانحة.'
-        : `سجل المساعدات في ${session.campLabel}.`,
+        ? 'سجل المساعدات التي استلمتها أسرتك من الجهات المانحة.'
+        : `سجل المساعدات الموزَّعة في ${session.campLabel}.`,
       actions: can('aid:create')
         ? button({
             label: 'تسجيل مساعدة',
@@ -106,7 +106,9 @@ function init({ session, content }) {
     <div id="summary" class="u-mt-5"></div>
     ${toolbar({
       searchValue: state.q,
-      searchPlaceholder: isOwn ? 'ابحث في مساعداتك…' : 'ابحث باسم المستلم أو رقم الأسرة أو المؤسسة…',
+      searchPlaceholder: isOwn
+        ? 'ابحث في مساعداتك…'
+        : 'ابحث برقم الأسرة أو رب الأسرة أو الجهة المانحة…',
       filters,
       activeCount: activeFilterCount(),
     })}
@@ -189,15 +191,15 @@ function collect(session) {
 }
 
 function summaryView(rows) {
-  const total = rows.reduce((sum, record) => sum + Number(record.value || 0), 0);
   const organizations = new Set(rows.map((record) => record.organizationId)).size;
   const types = new Set(rows.map((record) => record.type)).size;
+  const families = new Set(rows.map((record) => record.familyId)).size;
 
   return `
     <div class="grid grid--4 u-mb-5">
       ${statCard({ label: 'عدد المساعدات', value: formatNumber(rows.length), iconName: 'aid' })}
-      ${statCard({ label: 'القيمة الإجمالية', value: formatCurrency(total), iconName: 'wallet', tone: 'success' })}
-      ${statCard({ label: 'المؤسسات المانحة', value: formatNumber(organizations), iconName: 'building' })}
+      ${statCard({ label: 'الجهات المانحة', value: formatNumber(organizations), iconName: 'building', tone: 'success' })}
+      ${statCard({ label: 'الأسر المستفيدة', value: formatNumber(families), iconName: 'family' })}
       ${statCard({ label: 'أنواع المساعدات', value: formatNumber(types), iconName: 'chart', tone: 'warning' })}
     </div>`;
 }
@@ -208,6 +210,9 @@ function resultsView(session, rows) {
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const page = Math.min(state.page, pages);
   const slice = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  if (session.role === ROLES.DISPLACED) return ownHistoryView(rows, slice, page);
+
   const isSuper = session.role === ROLES.SUPER_ADMIN;
 
   const columns = [
@@ -215,15 +220,14 @@ function resultsView(session, rows) {
       key: 'typeLabel',
       label: 'نوع المساعدة',
       primary: true,
-      cell: (row) => cellMain(row.typeLabel, row.organizationName),
+      cell: (row) => cellMain(row.typeLabel, row.description),
     },
-    { key: 'personName', label: 'المستلم' },
-    { key: 'familyId', label: 'رقم الأسرة', cell: (row) => cellMono(row.familyId) },
-    { key: 'organizationName', label: 'المؤسسة المانحة' },
+    { key: 'organizationName', label: 'الجهة المانحة' },
+    { key: 'familyId', label: 'الأسرة المستفيدة', cell: (row) => cellMono(row.familyId) },
+    { key: 'familyHeadName', label: 'رب الأسرة' },
     ...(isSuper ? [{ key: 'campName', label: 'المخيم' }] : []),
     { key: 'quantity', label: 'الكمية', cell: (row) => esc(row.quantity || '—') },
-    { key: 'value', label: 'القيمة', cell: (row) => cellMono(formatCurrency(row.value)) },
-    { key: 'date', label: 'تاريخ التسليم', cell: (row) => formatDate(row.date) },
+    { key: 'date', label: 'تاريخ التوزيع', cell: (row) => formatDate(row.date) },
     {
       key: 'actions',
       label: 'إجراءات',
@@ -254,6 +258,37 @@ function resultsView(session, rows) {
       caption: 'سجل المساعدات',
       foot: rows.length > PAGE_SIZE ? pagination({ page, pageSize: PAGE_SIZE, total: rows.length }) : '',
     })}`;
+}
+
+/**
+ * What a displaced person sees: a plain read-only list of what their family
+ * received. No per-record detail screen, no row actions — everything worth
+ * knowing about a delivery is already on the card.
+ */
+function ownHistoryView(rows, slice, page) {
+  const cards = slice
+    .map(
+      (record) => `
+      <li class="card">
+        <div class="card__body">
+          <div class="row row--between u-gap-3">
+            <span class="u-medium">${esc(record.typeLabel)}</span>
+            <span class="u-sm u-secondary">${esc(formatDate(record.date))}</span>
+          </div>
+          <p class="u-sm u-secondary u-mt-2" style="line-height:1.8">${esc(record.description || '—')}</p>
+          <div class="row u-gap-2 u-wrap u-mt-3">
+            <span class="chip chip--outline">${esc(record.organizationName)}</span>
+            ${record.quantity ? `<span class="chip chip--outline">${esc(record.quantity)}</span>` : ''}
+          </div>
+        </div>
+      </li>`
+    )
+    .join('');
+
+  return `
+    ${resultBar({ count: slice.length, total: rows.length, noun: 'مساعدة' })}
+    <ul class="stack" style="list-style:none;margin:0;padding:0">${cards}</ul>
+    ${rows.length > PAGE_SIZE ? pagination({ page, pageSize: PAGE_SIZE, total: rows.length }) : ''}`;
 }
 
 function emptyView(session) {
