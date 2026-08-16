@@ -882,8 +882,12 @@ export function aidFields(values = {}, options = {}) {
       <span class="label">الأسر المستفيدة<span class="label__required" aria-hidden="true">*</span></span>
       <div class="aid-family-picker" data-aid-family-picker>
         ${inputField({ name: '__familySearch', label: 'بحث', value: '', placeholder: 'ابحث باسم رب الأسرة أو رقم الأسرة…' })}
-        <button type="button" class="btn btn--secondary u-mt-2" data-select-all-families>تحديد جميع الأسر</button>
-        <div class="checkbox-group u-mt-3" data-family-checklist role="group" aria-label="الأسر المستفيدة">
+        <div class="row u-gap-2 u-wrap u-mt-2">
+          <button type="button" class="btn btn--secondary" data-select-all-families>تحديد جميع الأسر</button>
+          <button type="button" class="btn btn--ghost" data-deselect-all-families>إلغاء تحديد الكل</button>
+        </div>
+        <p class="u-sm u-secondary u-mt-2" data-family-count aria-live="polite"></p>
+        <div class="checkbox-group u-mt-2" data-family-checklist role="group" aria-label="الأسر المستفيدة">
           ${families
             .map(
               (family, index) => `
@@ -903,9 +907,11 @@ export function aidFields(values = {}, options = {}) {
 }
 
 /**
- * Wire the family search filter and the "تحديد جميع الأسر" toggle inside a
- * rendered `aidFields()` block. Search only hides/shows checkbox rows —
- * unchecking a family after "select all" is a plain click on its own box.
+ * Wire the family search filter, the "تحديد جميع الأسر" / "إلغاء تحديد
+ * الكل" buttons, and the live selected-count readout inside a rendered
+ * `aidFields()` block. Search only hides/shows checkbox rows — unchecking a
+ * family after "select all" is a plain click on its own box, and the count
+ * readout reacts to that click too since it listens on the container.
  */
 export function bindAidFamilyPicker(scope) {
   const picker = scope.querySelector('[data-aid-family-picker]');
@@ -914,6 +920,13 @@ export function bindAidFamilyPicker(scope) {
   const search = picker.querySelector('input[name="__familySearch"]');
   const options = () => Array.from(picker.querySelectorAll('[data-family-option]'));
   const checkboxes = () => Array.from(picker.querySelectorAll('input[type="checkbox"]'));
+  const count = picker.querySelector('[data-family-count]');
+
+  const syncCount = () => {
+    if (!count) return;
+    const selected = checkboxes().filter((box) => box.checked).length;
+    count.textContent = selected ? `تم تحديد ${selected} أسرة` : 'لم يتم تحديد أي أسرة بعد';
+  };
 
   if (search) {
     search.addEventListener('input', () => {
@@ -925,14 +938,31 @@ export function bindAidFamilyPicker(scope) {
     });
   }
 
+  picker.addEventListener('change', (event) => {
+    if (event.target.matches('input[type="checkbox"]')) syncCount();
+  });
+
   const selectAll = picker.querySelector('[data-select-all-families]');
   if (selectAll) {
     selectAll.addEventListener('click', () => {
       checkboxes().forEach((box) => {
         box.checked = true;
       });
+      syncCount();
     });
   }
+
+  const deselectAll = picker.querySelector('[data-deselect-all-families]');
+  if (deselectAll) {
+    deselectAll.addEventListener('click', () => {
+      checkboxes().forEach((box) => {
+        box.checked = false;
+      });
+      syncCount();
+    });
+  }
+
+  syncCount();
 }
 ```
 
@@ -959,13 +989,13 @@ export function aidSchema() {
     types: [
       rules.custom(
         (value) => Array.isArray(value) && value.length > 0,
-        'يرجى اختيار نوع مساعدة واحد على الأقل'
+        'يرجى اختيار نوع مساعدة واحد على الأقل.'
       ),
     ],
     familyIds: [
       rules.custom(
         (value) => Array.isArray(value) && value.length > 0,
-        'يرجى اختيار أسرة واحدة على الأقل'
+        'يرجى اختيار أسرة واحدة على الأقل.'
       ),
     ],
   };
@@ -974,7 +1004,7 @@ export function aidSchema() {
 
 - [ ] **Step 4: Verify field rendering in isolation**
 
-Reuse the scratch-page technique from Task 8 Step 3: temporarily add `pages/_scratch-aid-check.html` importing `aidFields`/`aidSchema` from `../assets/js/ui/record-forms.js`, render `aidFields({}, { organizations: [{value:'org-1',label:'Test Org'}], families: [{value:'FAM-000001',label:'FAM-000001 — Test'}] })` into the page, and confirm in the browser that: no "الكمية" or "وصف المساعدة" field renders anywhere, a "نوع المساعدة" checkbox group renders with all `AID_TYPES` labels, and a "الأسر المستفيدة" section renders with a search box, a "تحديد جميع الأسر" button, and one checkbox per family. Delete the scratch file afterward (must not be committed).
+Reuse the scratch-page technique from Task 8 Step 3: temporarily add `pages/_scratch-aid-check.html` importing `aidFields`/`aidSchema` from `../assets/js/ui/record-forms.js`, render `aidFields({}, { organizations: [{value:'org-1',label:'Test Org'}], families: [{value:'FAM-000001',label:'FAM-000001 — Test'}] })` into the page, and confirm in the browser that: no "الكمية" or "وصف المساعدة" field renders anywhere, a "نوع المساعدة" checkbox group renders with all `AID_TYPES` labels, and a "الأسر المستفيدة" section renders with a search box, "تحديد جميع الأسر" and "إلغاء تحديد الكل" buttons, a live selected-count line, and one checkbox per family. Delete the scratch file afterward (must not be committed).
 
 - [ ] **Step 5: Commit**
 
@@ -1492,7 +1522,7 @@ with:
 
 - [ ] **Step 3: Verify in the browser**
 
-Open `http://localhost:3000/aid-create.html` as `admin@camps.ps`. Confirm: no "الكمية" or "وصف المساعدة" fields. Check two aid types and three families (search the family box for part of a head's name first, confirm the list filters, then clear the search). Submit with a valid donor and date — expect redirect to `aid-details.html` with no console errors. Reopen the same record via `aid-edit.html?id=<id>` and confirm the three families and two types are pre-checked. Try submitting with zero types selected — expect the exact error "يرجى اختيار نوع مساعدة واحد على الأقل" under the field, and zero families selected — expect "يرجى اختيار أسرة واحدة على الأقل". Click "تحديد جميع الأسر" and confirm every family checkbox becomes checked; manually uncheck one and confirm the rest remain checked (deselecting one family after select-all works).
+Open `http://localhost:3000/aid-create.html` as `admin@camps.ps`. Confirm: no "الكمية" or "وصف المساعدة" fields. Check two aid types and three families (search the family box for part of a head's name first, confirm the list filters, then clear the search) — confirm the "تم تحديد N أسرة" line updates to "تم تحديد 3 أسرة" as you check them. Submit with a valid donor and date — expect redirect to `aid-details.html` with no console errors. Reopen the same record via `aid-edit.html?id=<id>` and confirm the three families and two types are pre-checked and the count line reads "تم تحديد 3 أسرة". Try submitting with zero types selected — expect the exact error "يرجى اختيار نوع مساعدة واحد على الأقل." under the field, and zero families selected — expect "يرجى اختيار أسرة واحدة على الأقل." Click "تحديد جميع الأسر" and confirm every family checkbox becomes checked and the count line matches the total family count for the camp; click "إلغاء تحديد الكل" and confirm every checkbox clears and the count line reads "لم يتم تحديد أي أسرة بعد"; re-select all, then manually uncheck one and confirm only that one clears (deselecting a single family after select-all works) and the count decrements by one. Confirm the family checklist only ever lists families belonging to `admin@camps.ps`'s own camp — no family from another camp appears, even after editing the page URL's query string.
 
 - [ ] **Step 4: Commit**
 
@@ -1955,7 +1985,8 @@ Walk through the complete "Final Testing" scenarios from the spec:
 - Open every page listed in Task 6 and confirm the filter button opens a modal, never an inline panel; test apply/reset/cancel/Escape/outside-click/active-filter-count on at least `displaced.html` and `aid.html`.
 - On `documents.html`, upload a small image, download it from both the row action and the preview modal, confirm the filename and extension are correct; confirm a metadata-only seeded document shows a disabled download control.
 - On `aid-create.html`, register one distribution with 2 types and 3 families, then open each of those 3 families' `family-details.html` (or sign in as a member of one via `ahmad@camps.ps` if applicable) and confirm the distribution appears in that family's aid history with the correct joined type labels — and does not leak to an unrelated family's history.
-- Click "تحديد جميع الأسر" during creation and confirm every eligible family is selected; confirm the created record's "عدد الأسر المستفيدة" matches the total family count for that camp.
+- Click "تحديد جميع الأسر" during creation and confirm every eligible family is selected, the count line matches; click "إلغاء تحديد الكل" and confirm it clears back to zero; confirm the created record's "عدد الأسر المستفيدة" matches the total family count for that camp.
+- Sign in as `admin@camps.ps` (Camp Admin), open `aid-create.html`, and confirm the family checklist contains only families from that admin's own camp — no family belonging to another camp is selectable, listed, or reachable by editing the URL's query string. Sign in as `super@camps.ps` and confirm `aid-create.html`/`aid-edit.html` are still not reachable for Super Admin (unchanged `PAGE_ACCESS`), matching the preserved permission model. Sign in as `ahmad@camps.ps` (Displaced) and confirm `aid-create.html` is not reachable at all.
 - Run `store.validateData()` one final time from `dashboard.html` → `[]`.
 
 - [ ] **Step 7: Commit**

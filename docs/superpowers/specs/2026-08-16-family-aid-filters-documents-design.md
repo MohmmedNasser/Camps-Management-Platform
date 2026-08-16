@@ -115,15 +115,18 @@ Clicking "تحديد جميع الأسر" checks every family currently eligible
 
 ### Form (`ui/record-forms.js` `aidFields`)
 - `types`: checkbox group over existing `AID_TYPES` (no new taxonomy)
-- `familyIds`: searchable multi-select checklist (families scoped to the admin's camp, same scoping as today) + "تحديد جميع الأسر" toggle
+- `familyIds`: searchable multi-select checklist (families scoped to the admin's camp, same scoping as today) + "تحديد جميع الأسر" / "إلغاء تحديد الكل" button pair, plus a live "تم تحديد N أسرة" count under the list that updates on every checkbox change
 - `organizationId`, `date`: unchanged, required
 - Donor phone: **not a new form field.** The organization/donor record already carries an optional phone (existing domain rule). The aid *details* view surfaces it read-only ("رقم الجوال إن وجد") — the create form does not collect it.
 - Removed entirely: `quantity`, `description`, and (already-absent) price/value/recipient fields
 
 ### Validation (`aidSchema`)
-- `types`: at least one selected — error: "يرجى اختيار نوع مساعدة واحد على الأقل"
-- `familyIds`: at least one selected — error: "يرجى اختيار أسرة واحدة على الأقل"
+- `types`: at least one selected — error: "يرجى اختيار نوع مساعدة واحد على الأقل."
+- `familyIds`: at least one selected — error: "يرجى اختيار أسرة واحدة على الأقل."
 - `organizationId`, `date`: required (unchanged)
+
+### Camp scope security (explicit requirement, already satisfied by construction)
+The family checklist's options come from `select.familyOptions(session.campId)`, called server-side-equivalent in the page module using the **session's** `campId` — never from a query string or any client-editable input. A Camp Admin therefore cannot see, select, or export another camp's families through this picker, including via URL manipulation, because the option list itself never contains another camp's family IDs to begin with. `aid-create.html`/`aid-edit.html` remain in `PAGE_ACCESS` for `ROLES.CAMP_ADMIN` only (unchanged) — Super Admin does not reach this form today, so the "Super Admin selects across all camps" principle is a design note for if that page is ever opened to Super Admin, not a change made now (permissions are preserved per the brief's constraints).
 
 ### Selectors
 - `aidForFamily(familyId)` / `aidForPerson(displacedId)`: `record.familyIds.includes(familyId)` instead of scalar equality
