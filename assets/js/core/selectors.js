@@ -102,6 +102,14 @@ export function isUnder(person, years) {
 }
 
 /**
+ * A person is an orphan when either parent is recorded as deceased. This is
+ * the only place orphan status is computed — nothing stores it directly.
+ */
+export function isOrphan(person) {
+  return person.fatherStatus === 'deceased' || person.motherStatus === 'deceased';
+}
+
+/**
  * The boolean facts every filter, statistic and export column asks about one
  * person. Defined once so the table, the dashboard and the Excel file can
  * never disagree about what "طفل" or "مرضعة" means.
@@ -112,7 +120,7 @@ export function personFacts(person) {
     under1: isUnder(person, 1),
     under2: isUnder(person, 2),
     under3: isUnder(person, 3),
-    isOrphan: Boolean(person.isOrphan),
+    isOrphan: isOrphan(person),
     hasChronic: Boolean(person.chronicDiseases),
     hasDisability: Boolean(person.disability),
     // Only meaningful for female records; absent on male ones by design.
@@ -186,7 +194,7 @@ export function familyFacts(members) {
     childrenUnder3: count((m) => isUnder(m, 3)),
     childrenUnder2: count((m) => isUnder(m, 2)),
     childrenUnder1: count((m) => isUnder(m, 1)),
-    orphans: count((m) => m.isOrphan),
+    orphans: count(isOrphan),
     chronic: count((m) => m.chronicDiseases),
     disability: count((m) => m.disability),
     breastfeeding: count((m) => m.isBreastfeeding),
@@ -732,7 +740,8 @@ export function approveRequest(requestId, reviewerId) {
     monthlyIncome: 0,
     chronicDiseases: '',
     disability: '',
-    isOrphan: false,
+    fatherStatus: 'alive',
+    motherStatus: 'alive',
     status: STATUS.APPROVED,
     createdAt: new Date().toISOString(),
   });
@@ -1046,7 +1055,7 @@ export function statistics(session) {
     females: people.filter((person) => person.gender === 'female').length,
     // Age-derived, not relationship-derived: a "son" of 30 is not a child.
     children: people.filter(isChild).length,
-    orphans: people.filter((person) => Boolean(person.isOrphan)).length,
+    orphans: people.filter(isOrphan).length,
     camps: store.camps.count(),
     campAdmins: store.users.count((user) => user.role === ROLES.CAMP_ADMIN),
     documents: store.documents.list(inScope).length,
@@ -1234,7 +1243,7 @@ export function campBreakdown() {
       ),
       disabilityCount: people.filter((person) => Boolean(person.disability)).length,
       childrenCount: people.filter(isChild).length,
-      orphansCount: people.filter((person) => Boolean(person.isOrphan)).length,
+      orphansCount: people.filter(isOrphan).length,
     };
   });
 }

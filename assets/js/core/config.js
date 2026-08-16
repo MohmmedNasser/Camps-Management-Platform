@@ -64,6 +64,11 @@ export const MARITAL_STATUSES = [
   { value: 'widowed', label: 'أرمل / أرملة' },
 ];
 
+export const PARENT_STATUS = [
+  { value: 'alive', label: 'على قيد الحياة' },
+  { value: 'deceased', label: 'متوفى' },
+];
+
 export const NATIONALITIES = [
   { value: 'palestinian', label: 'فلسطيني' },
   { value: 'other', label: 'أخرى' },
