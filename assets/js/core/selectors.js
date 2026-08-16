@@ -144,7 +144,7 @@ export function familyWithStats(familyId) {
     head,
     headName: head ? head.fullName : '—',
     campName: campName(family.campId),
-    aidCount: store.aid.count((record) => record.familyId === familyId),
+    aidCount: store.aid.count((record) => (record.familyIds || []).includes(familyId)),
     // Aliases the detail and list views already read.
     childrenCount: facts.childrenUnder18,
     orphansCount: facts.orphans,
@@ -247,7 +247,7 @@ export function getFilteredFamilies(session, filters = {}) {
         head,
         headName: head ? head.fullName : '—',
         campName: campName(family.campId),
-        aidCount: store.aid.count((record) => record.familyId === family.id),
+        aidCount: store.aid.count((record) => (record.familyIds || []).includes(family.id)),
         // Kept for the existing list columns.
         childrenCount: facts.childrenUnder18,
         orphansCount: facts.orphans,
@@ -354,7 +354,7 @@ export function displacedRow(person) {
     familyLabel: person.familyId || '—',
     // Aid belongs to the family, so a person's aid count is their family's.
     aidCount: person.familyId
-      ? store.aid.count((record) => record.familyId === person.familyId)
+      ? store.aid.count((record) => (record.familyIds || []).includes(person.familyId))
       : 0,
   };
 }
@@ -384,10 +384,10 @@ export function searchDisplaced({
       store.aid
         .list(
           (record) =>
-            (!aidType || record.type === aidType) &&
+            (!aidType || (record.types || []).includes(aidType)) &&
             (!organizationId || record.organizationId === organizationId)
         )
-        .map((record) => record.familyId)
+        .flatMap((record) => record.familyIds || [])
     );
   }
 
@@ -523,13 +523,19 @@ export function campOfNationalId(nationalId) {
  * — there is no individual recipient and no monetary value.
  */
 export function aidRow(record) {
-  const family = record.familyId ? store.families.get(record.familyId) : null;
-  const head = family ? store.displaced.get(family.headId) : null;
+  const types = record.types || [];
+  const familyIds = record.familyIds || [];
+  const beneficiaries = familyIds.map((familyId) => {
+    const family = store.families.get(familyId);
+    const head = family ? store.displaced.get(family.headId) : null;
+    return { familyId, headName: head ? head.fullName : '—' };
+  });
   return {
     ...record,
-    typeLabel: aidTypeLabel(record.type),
+    typeLabels: types.map(aidTypeLabel).join('، '),
     organizationName: organizationName(record.organizationId),
-    familyHeadName: head ? head.fullName : '—',
+    beneficiaryCount: familyIds.length,
+    beneficiaries,
     campName: campName(record.campId),
   };
 }
@@ -545,24 +551,28 @@ export function searchAid({
   return store.aid
     .list(scope)
     .filter((record) => {
-      if (type && record.type !== type) return false;
+      if (type && !(record.types || []).includes(type)) return false;
       if (organizationId && record.organizationId !== organizationId) return false;
-      if (familyId && record.familyId !== familyId) return false;
+      if (familyId && !(record.familyIds || []).includes(familyId)) return false;
       if (!term) return true;
-      const family = record.familyId ? store.families.get(record.familyId) : null;
-      const head = family ? store.displaced.get(family.headId) : null;
+      const headNames = (record.familyIds || [])
+        .map((id) => store.families.get(id))
+        .filter(Boolean)
+        .map((family) => store.displaced.get(family.headId))
+        .filter(Boolean)
+        .map((head) => head.fullName.toLowerCase());
       return (
-        (record.familyId || '').toLowerCase().includes(term) ||
-        (head ? head.fullName.toLowerCase().includes(term) : false) ||
-        (record.description || '').toLowerCase().includes(term) ||
+        (record.familyIds || []).some((id) => id.toLowerCase().includes(term)) ||
+        headNames.some((name) => name.includes(term)) ||
         organizationName(record.organizationId).toLowerCase().includes(term) ||
-        aidTypeLabel(record.type).includes(term)
+        (record.types || []).some((value) => aidTypeLabel(value).includes(term))
       );
     })
     .map(aidRow)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
+/** Matches when this family is among the distribution's beneficiaries. */
 export function aidForFamily(familyId) {
   return searchAid({ familyId });
 }
@@ -644,7 +654,7 @@ export function organizationRow(org) {
   return {
     ...org,
     aidCount: aidRows.length,
-    familiesCount: new Set(aidRows.map((record) => record.familyId)).size,
+    familiesCount: new Set(aidRows.flatMap((record) => record.familyIds || [])).size,
   };
 }
 
@@ -976,7 +986,10 @@ export function removeFamily(familyId) {
   familyMembers(familyId).forEach((member) => {
     store.displaced.update(member.id, { familyId: '' });
   });
-  store.aid.removeWhere((record) => record.familyId === familyId);
+  // A distribution's beneficiary list is fixed at creation time; removing one
+  // of several beneficiary families removes the whole shared record rather
+  // than trying to edit a snapshot after the fact.
+  store.aid.removeWhere((record) => (record.familyIds || []).includes(familyId));
   return store.families.remove(familyId);
 }
 
@@ -1090,7 +1103,7 @@ export function aidByType(session) {
   return AID_TYPES.map((type) => ({
     value: type.value,
     label: type.label,
-    count: rows.filter((row) => row.type === type.value).length,
+    count: rows.filter((row) => (row.types || []).includes(type.value)).length,
   })).filter((entry) => entry.count > 0);
 }
 
@@ -1211,7 +1224,9 @@ export function topFamiliesByAid(session, limit = 5) {
   );
   const counts = new Map();
   rows.forEach((record) => {
-    counts.set(record.familyId, (counts.get(record.familyId) || 0) + 1);
+    (record.familyIds || []).forEach((familyId) => {
+      counts.set(familyId, (counts.get(familyId) || 0) + 1);
+    });
   });
   return [...counts.entries()]
     .map(([familyId, count]) => {

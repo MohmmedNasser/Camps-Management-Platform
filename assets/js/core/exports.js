@@ -106,3 +106,24 @@ export function familyExportRow(family) {
     pregnant: family.pregnant,
   };
 }
+
+/* ---- Aid ------------------------------------------------------------------ */
+
+export const AID_COLUMNS = [
+  { key: 'typeLabels', label: 'نوع المساعدة', width: 30 },
+  { key: 'organizationName', label: 'الجهة المانحة', width: 24 },
+  { key: 'beneficiaryCount', label: 'عدد الأسر المستفيدة', width: 18 },
+  { key: 'campName', label: 'المخيم', width: 18 },
+  { key: 'date', label: 'تاريخ التوزيع', width: 14 },
+];
+
+/** One spreadsheet row from one aid distribution — `aidRow()`'s shape already matches. */
+export function aidExportRow(record) {
+  return {
+    typeLabels: record.typeLabels,
+    organizationName: record.organizationName,
+    beneficiaryCount: record.beneficiaryCount,
+    campName: record.campName,
+    date: record.date,
+  };
+}
