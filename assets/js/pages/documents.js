@@ -37,6 +37,31 @@ import { ROLES, DOCUMENT_CATEGORIES } from '../core/config.js';
 
 const state = { q: '', category: '', campId: '' };
 
+const MIME_EXTENSIONS = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'application/pdf': 'pdf',
+};
+
+function filenameWithExtension(name, mime) {
+  if (/\.[a-zA-Z0-9]{2,5}$/.test(name)) return name;
+  const ext = MIME_EXTENSIONS[mime];
+  return ext ? `${name}.${ext}` : name;
+}
+
+/** Triggers a real browser download. No-ops when there is no downloadable content. */
+function downloadDocument(row) {
+  if (!row.dataUrl) return;
+  const link = document.createElement('a');
+  link.href = row.dataUrl;
+  link.download = filenameWithExtension(row.name, row.mime);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 const shell = mountShell({ active: 'documents.html', title: 'الملفات والمستندات' });
 if (shell) init(shell);
 
@@ -101,6 +126,11 @@ function init({ session, content }) {
   delegate(content, 'click', '[data-preview]', (event, node) => {
     const row = store.documents.get(node.dataset.preview);
     if (row) openPreview(select.documentRow(row));
+  });
+
+  delegate(content, 'click', '[data-download]', (event, node) => {
+    const row = store.documents.get(node.dataset.download);
+    if (row) downloadDocument(select.documentRow(row));
   });
 
   delegate(content, 'click', '[data-delete]', async (event, node) => {
@@ -190,6 +220,9 @@ function resultsView(session, rows) {
       cell: (row) =>
         rowActions([
           { iconName: 'eye', title: `معاينة ${row.name}`, attrs: `data-preview="${row.id}"` },
+          row.dataUrl
+            ? { iconName: 'download', title: `تنزيل ${row.name}`, attrs: `data-download="${row.id}"` }
+            : { iconName: 'download', title: 'الملف غير متاح للتنزيل', attrs: 'disabled aria-disabled="true"' },
           can('document:delete') && {
             iconName: 'trash',
             title: `حذف ${row.name}`,
@@ -302,7 +335,7 @@ function openUploader(session) {
 }
 
 function openPreview(row) {
-  openModal({
+  const modal = openModal({
     title: row.name,
     description: `${row.categoryLabel} · ${fileSize(row.size)} · ${formatDate(row.uploadedAt)}`,
     size: 'lg',
@@ -325,6 +358,16 @@ function openPreview(row) {
           definition('رفع بواسطة', row.uploaderName),
         ])}
       </div>`,
-    footer: button({ label: 'إغلاق', variant: 'secondary', attrs: 'data-close' }),
+    footer: `
+      ${button({ label: 'إغلاق', variant: 'secondary', attrs: 'data-close' })}
+      ${
+        row.dataUrl
+          ? button({ label: 'تنزيل المستند', variant: 'primary', iconName: 'download', attrs: `data-download="${row.id}"` })
+          : button({ label: 'تنزيل المستند', variant: 'primary', iconName: 'download', attrs: 'disabled aria-disabled="true"' })
+      }`,
   });
+
+  if (row.dataUrl) {
+    delegate(modal.element, 'click', '[data-download]', () => downloadDocument(row));
+  }
 }
