@@ -27,6 +27,7 @@ import {
 import {
   GENDERS,
   MARITAL_STATUSES,
+  PARENT_STATUS,
   NATIONALITIES,
   TENT_TYPES,
   GOVERNORATES,
@@ -197,13 +198,6 @@ export function displacedFields(values = {}, options = {}) {
           type: 'date',
           value: toInputDate(values.displacementDate),
         }),
-        inputField({
-          name: 'currentResidence',
-          label: 'مكان الإقامة الحالي',
-          value: values.currentResidence,
-          placeholder: 'القطاع أو البلوك داخل المخيم',
-          full: true,
-        }),
       ],
     }),
 
@@ -230,14 +224,21 @@ export function displacedFields(values = {}, options = {}) {
 
     fieldset({
       legend: 'الحالة الاجتماعية',
+      hint: 'حالة اليتم تُحتسب تلقائياً من حالة الوالدين ولا يمكن تعديلها مباشرة.',
       // The maternity block is revealed only for a female record — see
       // `bindMaternityFields` in ui/form.js. A male file never shows it.
       fields: [
-        checkboxField({
-          name: 'isOrphan',
-          label: 'يتيم',
-          description: 'يُحتسب ضمن عدد الأيتام في إحصائيات المخيم.',
-          checked: Boolean(values.isOrphan),
+        selectField({
+          name: 'fatherStatus',
+          label: 'حالة الأب',
+          options: PARENT_STATUS,
+          value: values.fatherStatus || 'alive',
+        }),
+        selectField({
+          name: 'motherStatus',
+          label: 'حالة الأم',
+          options: PARENT_STATUS,
+          value: values.motherStatus || 'alive',
         }),
         `<div data-maternity="gender"${values.gender === 'female' ? '' : ' hidden'}>
           ${checkboxField({
@@ -431,6 +432,12 @@ export function memberFields(index, values = {}) {
           value: values.relationship,
           required: true,
         })}
+        ${selectField({
+          name: at('maritalStatus'),
+          label: 'الحالة الاجتماعية',
+          options: MARITAL_STATUSES,
+          value: values.maritalStatus,
+        })}
         ${inputField({
           name: at('birthDate'),
           label: 'تاريخ الميلاد',
@@ -459,11 +466,17 @@ export function memberFields(index, values = {}) {
           optional: true,
           placeholder: 'مثال: إعاقة حركية',
         })}
-        ${checkboxField({
-          name: at('isOrphan'),
-          label: 'يتيم',
-          description: 'يُحتسب ضمن عدد الأيتام في إحصائيات المخيم.',
-          checked: Boolean(values.isOrphan),
+        ${selectField({
+          name: at('fatherStatus'),
+          label: 'حالة الأب',
+          options: PARENT_STATUS,
+          value: values.fatherStatus || 'alive',
+        })}
+        ${selectField({
+          name: at('motherStatus'),
+          label: 'حالة الأم',
+          options: PARENT_STATUS,
+          value: values.motherStatus || 'alive',
         })}
         <div data-maternity="${at('gender')}"${values.gender === 'female' ? '' : ' hidden'}>
           ${checkboxField({
@@ -513,7 +526,9 @@ export function readMember(values, index) {
     gender,
     chronicDiseases: (at('chronicDiseases') || '').trim(),
     disability: (at('disability') || '').trim(),
-    isOrphan: Boolean(at('isOrphan')),
+    maritalStatus: at('maritalStatus') || 'single',
+    fatherStatus: at('fatherStatus') || 'alive',
+    motherStatus: at('motherStatus') || 'alive',
     ...maternityFrom({
       gender,
       isPregnant: at('isPregnant'),
