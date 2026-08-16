@@ -23,7 +23,13 @@ import {
   pagination,
 } from '../ui/components.js';
 import { dataTable, cellMain, cellMono, rowActions, resultBar } from '../ui/table.js';
-import { toolbar, initToolbar, activeFilters, filterSummary } from '../ui/toolbar.js';
+import {
+  toolbar,
+  initToolbar,
+  activeFilters,
+  filterSummary,
+  syncFilterButton,
+} from '../ui/toolbar.js';
 import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
@@ -196,7 +202,7 @@ function init({ session, content }) {
       searchPlaceholder: 'ابحث برقم الأسرة أو اسم رب الأسرة…',
       filters,
       activeCount: activeFilterCount(),
-      staged: true,
+      modal: true,
     })}
     <div id="summary"></div>
     <div id="results">${skeletonTable(6)}</div>`;
@@ -211,6 +217,13 @@ function init({ session, content }) {
       setParams({ q: state.q, ...filterValues(), page: '' });
       load(session);
     },
+    // Fresh descriptors every time the sheet opens, so it always reflects the
+    // filters most recently applied rather than a stale snapshot from render.
+    getFilters: () => filterSpec(session),
+    // Live count for the values staged inside the sheet, through the exact
+    // same query the table and export use.
+    onPreview: (staged) =>
+      select.getFilteredFamilies(session, { query: state.q, ...staged }).length,
   });
 
   delegate(content, 'click', '[data-page]', (event, node) => {
@@ -294,6 +307,11 @@ async function load(session) {
         query: state.q,
       });
     }
+
+    // The filter badge only knows what state.js knew at page render; every
+    // apply/reset/chip-removal lands here, so this is the one place that
+    // needs to keep it current.
+    syncFilterButton(document, activeFilterCount());
   } catch (error) {
     console.error(error);
     target.innerHTML = errorState({ retryAttrs: 'data-retry' });

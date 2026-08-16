@@ -104,11 +104,17 @@ export function openModal({
   openCount += 1;
   document.body.classList.add('is-locked');
 
-  // Next frame so the CSS transition runs.
+  // Next frame so the CSS transition runs, then one more before focusing: a
+  // browser that has not yet flushed the `visibility: hidden -> visible`
+  // style change from this same frame silently drops a `.focus()` call made
+  // against it, so the dialog opens but keyboard focus is left stranded on
+  // whatever triggered it.
   requestAnimationFrame(() => {
     wrapper.dataset.open = 'true';
-    const first = focusables(dialog).find((node) => !node.hasAttribute('data-close'));
-    (first || dialog.querySelector('[data-close]') || dialog).focus?.();
+    requestAnimationFrame(() => {
+      const first = focusables(dialog).find((node) => !node.hasAttribute('data-close'));
+      (first || dialog.querySelector('[data-close]') || dialog).focus?.();
+    });
   });
 
   return {

@@ -5,17 +5,20 @@
  * `tabs()` / `initTabs()` in components.js. The page decides what the filters
  * mean; the toolbar only reports the values back.
  *
- * Two modes:
- *   - default: every change fires `onChange` immediately (aid, documents, …)
- *   - `staged: true`: changes are held until "تطبيق الفلاتر" is pressed, which
- *     is what the ten-filter panels on displaced and families use, so the page
- *     is not re-queried once per select on a phone.
+ * Two presentations:
+ *   - default: an inline panel that opens under the search row and applies on
+ *     every change (aid, documents)
+ *   - `modal: true`: the filter button opens a sheet built on `ui/modal.js`,
+ *     which keeps a page carrying a dozen filters compact. Values are staged
+ *     inside the sheet and committed only by "تطبيق الفلاتر" (displaced,
+ *     families)
  */
 
-import { esc, qs, qsa, on, debounce } from '../utils/dom.js';
+import { esc, qs, qsa, on, delegate, debounce } from '../utils/dom.js';
 import { icon } from './icons.js';
 import { button } from './components.js';
 import { selectField } from './form.js';
+import { openModal } from './modal.js';
 
 /**
  * @param {object} options
@@ -23,9 +26,9 @@ import { selectField } from './form.js';
  * @param {string} [options.searchPlaceholder]
  * @param {{name, label, options, value?, placeholder?, group?}[]} [options.filters]
  * @param {string} [options.actions] markup placed next to the search box
- * @param {number} [options.activeCount] filters currently applied (shown on the toggle)
- * @param {boolean} [options.staged] hold changes until "تطبيق الفلاتر"
- * @param {boolean} [options.open] render the panel already expanded
+ * @param {number} [options.activeCount] filters currently applied (shown on the button)
+ * @param {boolean} [options.modal] open the filters in a sheet instead of inline
+ * @param {boolean} [options.open] render the inline panel already expanded
  */
 export function toolbar({
   searchValue = '',
@@ -33,13 +36,13 @@ export function toolbar({
   filters = [],
   actions = '',
   activeCount = 0,
-  staged = false,
+  modal = false,
   open = false,
 }) {
   const panelOpen = open || activeCount > 0;
 
   return `
-    <div class="toolbar" data-toolbar${staged ? ' data-staged' : ''}>
+    <div class="toolbar" data-toolbar${modal ? ' data-filter-modal' : ''}>
       <div class="toolbar__row">
         <div class="input-wrap">
           <span class="input-wrap__icon">${icon('search', { size: 17 })}</span>
@@ -47,25 +50,43 @@ export function toolbar({
             value="${esc(searchValue)}" placeholder="${esc(searchPlaceholder)}"
             aria-label="${esc(searchPlaceholder)}">
         </div>
-        ${
-          filters.length
-            ? button({
-                label: activeCount ? `فلترة (${activeCount})` : 'فلترة',
-                variant: activeCount ? 'primary' : 'secondary',
-                iconName: 'filter',
-                attrs: `data-toggle-filters aria-expanded="${panelOpen}" aria-controls="toolbar-filters"`,
-              })
-            : ''
-        }
+        ${filters.length ? filterButton({ activeCount, modal, panelOpen }) : ''}
         ${actions}
       </div>
 
-      ${filters.length ? filterPanel(filters, { staged, open: panelOpen }) : ''}
+      ${filters.length && !modal ? filterPanel(filters, { open: panelOpen }) : ''}
     </div>`;
 }
 
-/** The filter row itself — always rendered *below* the search row, never beside it. */
-function filterPanel(filters, { staged, open }) {
+/**
+ * The فلترة trigger. In modal mode the active count rides as a badge rather
+ * than being spliced into the label, so the button width barely moves as
+ * filters are added.
+ */
+export function filterButton({ activeCount, modal, panelOpen }) {
+  if (!modal) {
+    return button({
+      label: activeCount ? `فلترة (${activeCount})` : 'فلترة',
+      variant: activeCount ? 'primary' : 'secondary',
+      iconName: 'filter',
+      attrs: `data-toggle-filters aria-expanded="${panelOpen}" aria-controls="toolbar-filters"`,
+    });
+  }
+
+  const badge = activeCount
+    ? `<span class="btn__badge">${activeCount}</span>
+       <span class="sr-only">${activeCount} فلاتر نشطة</span>`
+    : '';
+
+  return `
+    <button type="button" class="btn btn--${activeCount ? 'primary' : 'secondary'}"
+      data-open-filters aria-haspopup="dialog">
+      ${icon('filter', { size: 17 })}فلترة${badge}
+    </button>`;
+}
+
+/** Consecutive filters sharing a `group` become one titled section. */
+function groupFilters(filters) {
   const groups = [];
   filters.forEach((filter) => {
     const name = filter.group || '';
@@ -73,25 +94,31 @@ function filterPanel(filters, { staged, open }) {
     if (last && last.name === name) last.items.push(filter);
     else groups.push({ name, items: [filter] });
   });
+  return groups;
+}
 
-  const body = groups
+function filterFields(filters) {
+  return filters
+    .map((filter) =>
+      selectField({
+        name: filter.name,
+        label: filter.label,
+        options: filter.options,
+        value: filter.value || '',
+        placeholder: filter.placeholder || 'الكل',
+      })
+    )
+    .join('');
+}
+
+/** The inline panel — always rendered *below* the search row, never beside it. */
+function filterPanel(filters, { open }) {
+  const body = groupFilters(filters)
     .map(
       (group) => `
       <div class="filters__group">
         ${group.name ? `<p class="filters__group-title">${esc(group.name)}</p>` : ''}
-        <div class="filters__fields">
-          ${group.items
-            .map((filter) =>
-              selectField({
-                name: filter.name,
-                label: filter.label,
-                options: filter.options,
-                value: filter.value || '',
-                placeholder: filter.placeholder || 'الكل',
-              })
-            )
-            .join('')}
-        </div>
+        <div class="filters__fields">${filterFields(group.items)}</div>
       </div>`
     )
     .join('');
@@ -101,55 +128,146 @@ function filterPanel(filters, { staged, open }) {
       ${body}
       <div class="filters__actions">
         ${button({ label: 'إعادة تعيين', variant: 'ghost', attrs: 'data-reset-filters' })}
-        ${
-          staged
-            ? button({
-                label: 'تطبيق الفلاتر',
-                variant: 'primary',
-                iconName: 'check',
-                attrs: 'data-apply-filters',
-              })
-            : ''
-        }
       </div>
     </div>`;
+}
+
+/* ---- Filter sheet -------------------------------------------------------- */
+
+/**
+ * Open the filters in a dialog, built on the app's one modal component so the
+ * focus trap, Esc, scrim click and focus restore all come from there.
+ *
+ * Values are staged: the sheet edits its own copy and the page hears nothing
+ * until "تطبيق الفلاتر". Dismissing by ×, scrim or Esc therefore discards the
+ * edits and leaves the applied filters exactly as they were.
+ *
+ * @param {object} options
+ * @param {object[]} options.filters descriptors, each carrying its current value
+ * @param {(values: object) => void} options.onApply committed values
+ * @param {(values: object) => number} [options.onPreview] how many rows the
+ *        staged values would return; shown live so nobody applies into an
+ *        empty list and has to reopen. The page owns the query — the sheet
+ *        only asks.
+ */
+export function openFilterSheet({ filters, onApply, onPreview = null }) {
+  const sections = groupFilters(filters)
+    .map(
+      (group) => `
+      <section class="filter-sheet__group">
+        ${group.name ? `<h3 class="filter-sheet__title">${esc(group.name)}</h3>` : ''}
+        <div class="filter-sheet__fields">${filterFields(group.items)}</div>
+      </section>`
+    )
+    .join('');
+
+  const modal = openModal({
+    title: 'الفلاتر',
+    description: 'تُطبَّق الفلاتر معاً؛ اختر ما يلزم ثم اضغط تطبيق.',
+    size: 'lg',
+    // The live count sits at the end of the scrollable body, not the footer —
+    // that keeps the footer to plain reset/apply buttons sharing the same
+    // full-width, equal-split styling every other modal in the app uses.
+    body: `
+      <div class="filter-sheet">${sections}</div>
+      <p class="filter-sheet__preview" data-preview aria-live="polite"></p>`,
+    footer: `
+      ${button({ label: 'إعادة تعيين', variant: 'ghost', attrs: 'data-reset-filters' })}
+      ${button({
+        label: 'تطبيق الفلاتر',
+        variant: 'primary',
+        iconName: 'check',
+        attrs: 'data-apply-filters',
+      })}`,
+  });
+
+  const root = modal.element;
+  const selects = () => qsa('.filter-sheet select', root);
+  const values = () =>
+    Object.fromEntries(selects().map((select) => [select.name, select.value]));
+
+  const preview = qs('[data-preview]', root);
+  const refresh = debounce(() => {
+    if (!preview || !onPreview) return;
+    const count = onPreview(values());
+    preview.textContent = count === 0 ? 'لا توجد نتائج مطابقة' : `ستظهر ${count} نتيجة`;
+    preview.dataset.empty = String(count === 0);
+  }, 150);
+
+  selects().forEach((select) => on(select, 'change', refresh));
+  refresh();
+
+  on(qs('[data-apply-filters]', root), 'click', () => {
+    const applied = values();
+    modal.close('apply');
+    onApply(applied);
+  });
+
+  /*
+   * Reset clears every field AND commits the empty state immediately — the
+   * page's result count and active-filter badge must drop to zero right
+   * away, not only once "تطبيق الفلاتر" is pressed. The sheet stays open so
+   * the cleared selects are visible; the search box is not a filter and is
+   * left untouched.
+   */
+  on(qs('[data-reset-filters]', root), 'click', () => {
+    selects().forEach((select) => {
+      select.value = '';
+    });
+    const cleared = values();
+    refresh();
+    onApply(cleared);
+    qs('.filter-sheet select', root)?.focus();
+  });
+
+  return modal;
 }
 
 /**
  * Wire a rendered toolbar.
  *
  * @param {HTMLElement} root element containing the toolbar
- * @param {{onChange: (values: object) => void}} handlers
- *        onChange receives `{ q, ...filterName: value }`.
+ * @param {object} handlers
+ * @param {(values: object) => void} handlers.onChange receives `{ q, ...filters }`
+ * @param {() => object[]} [handlers.getFilters] current filter descriptors, read
+ *        fresh each time the sheet opens so it never shows stale values
+ * @param {(values: object) => number} [handlers.onPreview] staged result count
+ * @returns {{openFilters: Function}} so the page can reopen the sheet itself
  */
-export function initToolbar(root, { onChange }) {
+export function initToolbar(root, { onChange, getFilters = null, onPreview = null }) {
   const host = qs('[data-toolbar]', root);
-  if (!host) return;
+  if (!host) return { openFilters: () => {} };
 
-  const staged = host.hasAttribute('data-staged');
+  const useModal = host.hasAttribute('data-filter-modal');
   const search = qs('#toolbar-search', host);
   const panel = qs('#toolbar-filters', host);
   const toggle = qs('[data-toggle-filters]', host);
   const selects = () => qsa('select', panel || host);
 
-  const filterValues = () => {
-    const out = {};
-    selects().forEach((select) => {
-      out[select.name] = select.value;
-    });
-    return out;
-  };
+  const inlineValues = () =>
+    Object.fromEntries(selects().map((select) => [select.name, select.value]));
 
-  // In staged mode the search box must keep firing against the filters that
-  // were last *applied*, not the ones sitting unapplied in the panel.
-  let applied = filterValues();
+  // The search box fires against the filters that were last *applied*, never
+  // against values a user is still editing in the sheet.
+  let applied = useModal ? {} : inlineValues();
 
   const emit = (values) => {
     applied = { ...values };
     onChange({ q: search ? search.value : '', ...values });
   };
 
-  if (toggle && panel) {
+  const openFilters = () => {
+    if (!useModal || !getFilters) return;
+    openFilterSheet({ filters: getFilters(), onApply: emit, onPreview });
+  };
+
+  if (useModal) {
+    // Delegated on `root`, not the toolbar alone: the "+N" chip that reopens
+    // the sheet lives in the filter-summary strip, a sibling of the toolbar
+    // that is (re)rendered after every search, so a one-time `qsa` at init
+    // would miss it.
+    delegate(root, 'click', '[data-open-filters]', openFilters);
+  } else if (toggle && panel) {
     on(toggle, 'click', () => {
       const willOpen = panel.dataset.open !== 'true';
       panel.dataset.open = String(willOpen);
@@ -163,32 +281,42 @@ export function initToolbar(root, { onChange }) {
     on(search, 'search', fire);
   }
 
-  if (staged) {
-    const apply = qs('[data-apply-filters]', host);
-    if (apply) on(apply, 'click', () => emit(filterValues()));
-    // Enter inside the panel applies, rather than doing nothing.
-    if (panel) {
-      on(panel, 'keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          emit(filterValues());
-        }
+  if (!useModal) {
+    selects().forEach((select) => on(select, 'change', () => emit(inlineValues())));
+
+    const reset = qs('[data-reset-filters]', host);
+    if (reset) {
+      on(reset, 'click', () => {
+        if (search) search.value = '';
+        selects().forEach((select) => {
+          select.value = '';
+        });
+        emit(inlineValues());
       });
     }
-  } else {
-    selects().forEach((select) => on(select, 'change', () => emit(filterValues())));
   }
 
-  const reset = qs('[data-reset-filters]', host);
-  if (reset) {
-    on(reset, 'click', () => {
-      if (search) search.value = '';
-      selects().forEach((select) => {
-        select.value = '';
-      });
-      emit(filterValues());
-    });
-  }
+  return { openFilters };
+}
+
+/**
+ * Refresh the فلترة button's active-count badge after a filter change.
+ *
+ * The toolbar markup is written once at page render; applying, resetting or
+ * removing a chip only re-renders the results and the summary strip, so
+ * without this the badge would go stale the moment a filter is applied
+ * through the sheet. Regenerated from the same `filterButton()` used at
+ * first render, then swapped in by `outerHTML` — safe because every click on
+ * it is caught by the delegated listener `initToolbar` already installed on
+ * `root`, not a reference to this specific node.
+ *
+ * @param {HTMLElement} root element containing the toolbar
+ * @param {number} count active filter count
+ */
+export function syncFilterButton(root, count) {
+  const trigger = qs('[data-open-filters]', root);
+  if (!trigger) return;
+  trigger.outerHTML = filterButton({ activeCount: count, modal: true, panelOpen: false });
 }
 
 /**
@@ -231,45 +359,48 @@ export function activeFilters(filters, values = {}) {
     .filter(Boolean);
 }
 
+/** How many chips stay visible before the rest collapse into "+N". */
+const CHIP_LIMIT = 3;
+
 /**
- * Summary above the results: what is filtering them, how many matched, and a
- * per-chip remove control (`data-remove-filter="<name>"`).
+ * The active-filter strip that sits under the toolbar.
+ *
+ * Deliberately one compact line: the whole point of moving the fields into a
+ * sheet is that the page stays short, so chips beyond `CHIP_LIMIT` collapse
+ * into a "+N" button that reopens the sheet rather than growing a second tall
+ * block. Each chip removes just its own filter (`data-remove-filter="<name>"`).
  */
 export function filterSummary({ active, total, noun = 'سجل', query = '' }) {
   if (!active.length && !query) return '';
 
-  const chips = [
-    query
-      ? `<button type="button" class="chip chip--active" data-remove-filter="q">
-           <span>بحث: ${esc(query)}</span>
-           <span class="chip__remove" aria-hidden="true">×</span>
-           <span class="sr-only">إزالة البحث</span>
-         </button>`
-      : '',
-    ...active.map(
-      (item) => `
-      <button type="button" class="chip chip--active" data-remove-filter="${esc(item.name)}">
-        <span>${esc(item.label)}: ${esc(item.valueLabel)}</span>
-        <span class="chip__remove" aria-hidden="true">×</span>
-        <span class="sr-only">إزالة الفلتر ${esc(item.label)}</span>
-      </button>`
-    ),
-  ]
-    .filter(Boolean)
-    .join('');
+  const chip = (name, text, srLabel) => `
+    <button type="button" class="chip chip--active" data-remove-filter="${esc(name)}">
+      <span class="chip__text">${esc(text)}</span>
+      <span class="chip__remove" aria-hidden="true">×</span>
+      <span class="sr-only">${esc(srLabel)}</span>
+    </button>`;
 
-  const count = active.length + (query ? 1 : 0);
+  const all = [
+    query ? chip('q', `بحث: ${query}`, 'إزالة البحث') : '',
+    ...active.map((item) =>
+      chip(item.name, `${item.label}: ${item.valueLabel}`, `إزالة الفلتر ${item.label}`)
+    ),
+  ].filter(Boolean);
+
+  const shown = all.slice(0, CHIP_LIMIT);
+  const hidden = all.length - shown.length;
+
+  const more = hidden
+    ? `<button type="button" class="chip chip--more" data-open-filters
+         aria-label="عرض ${hidden} فلاتر أخرى">+${hidden}</button>`
+    : '';
 
   return `
-    <section class="filter-summary" aria-label="الفلاتر النشطة">
-      <div class="filter-summary__head">
-        <h2 class="filter-summary__title">النتائج المفلترة</h2>
-        <span class="badge badge--info">${count} ${count === 1 ? 'فلتر نشط' : 'فلاتر نشطة'}</span>
-      </div>
-      <div class="filter-summary__chips">${chips}</div>
-      <p class="filter-summary__count">عدد النتائج: <strong>${total}</strong> ${esc(noun)}</p>
-      <div class="filter-summary__actions">
-        ${button({ label: 'إزالة كل الفلاتر', variant: 'ghost', attrs: 'data-clear-search' })}
-      </div>
-    </section>`;
+    <div class="filter-bar" aria-label="الفلاتر النشطة">
+      <div class="filter-bar__chips">${shown.join('')}${more}</div>
+      <p class="filter-bar__count">
+        <strong>${total}</strong> ${esc(noun)}
+      </p>
+      <button type="button" class="filter-bar__clear" data-clear-search>إزالة الكل</button>
+    </div>`;
 }

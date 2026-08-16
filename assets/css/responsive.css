@@ -67,7 +67,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .filters__fields {
+  .filters__fields,
+  .filter-sheet__fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

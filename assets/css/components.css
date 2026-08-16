@@ -166,6 +166,27 @@
   overflow: hidden;
 }
 
+/* Count riding inside a button, e.g. the فلترة trigger. */
+.btn__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding-inline: 6px;
+  margin-inline-start: var(--space-1);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.24);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.btn--secondary .btn__badge {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
 .card--hover {
   transition: transform var(--t-base), box-shadow var(--t-base),
     border-color var(--t-base);
