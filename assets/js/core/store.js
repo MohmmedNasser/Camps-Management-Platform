@@ -243,6 +243,9 @@ export function validateData() {
     if (person.campId && !campIds.has(person.campId)) {
       problems.push(`النازح ${person.id} يشير إلى مخيم غير موجود`);
     }
+    if ('isOrphan' in person || 'currentResidence' in person) {
+      problems.push(`النازح ${person.id} يحتوي على حقول ملغاة (يتيم يدوي أو مكان إقامة)`);
+    }
   });
 
   families.list().forEach((family) => {
