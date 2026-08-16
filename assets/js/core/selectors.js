@@ -288,7 +288,6 @@ export function nextFamilyId() {
 /** Fields a household shares, copied from the head onto every member. */
 const SHARED_HOUSEHOLD_FIELDS = [
   'tentType',
-  'currentResidence',
   'originGovernorate',
   'originCity',
   'displacementDate',
