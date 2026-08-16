@@ -10,7 +10,7 @@ import { toInputDate } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import { button, alert, breadcrumb, pageHeader, emptyState } from '../ui/components.js';
 import { bindForm } from '../ui/form.js';
-import { aidFields, aidSchema } from '../ui/record-forms.js';
+import { aidFields, aidSchema, bindAidFamilyPicker } from '../ui/record-forms.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import * as store from '../core/store.js';
@@ -60,9 +60,8 @@ function init({ session, content }) {
     <form class="form u-mt-5" id="aid-form" novalidate>
       ${aidFields(
         {
-          familyId,
+          familyIds: familyId ? [familyId] : [],
           date: toInputDate(new Date()),
-          type: query.type || 'food',
         },
         { organizations, families }
       )}
@@ -73,36 +72,39 @@ function init({ session, content }) {
     </form>`;
 
   const form = qs('#aid-form', content);
+  bindAidFamilyPicker(form);
 
   bindForm(form, {
     schema: aidSchema(),
     onSubmit: (values) => {
-      const family = store.families.get(values.familyId);
+      const familyIds = Array.isArray(values.familyIds) ? values.familyIds : [];
+      const eligibleFamilyIds = new Set(families.map((f) => f.value));
+      const allFamiliesSelected =
+        eligibleFamilyIds.size > 0 && familyIds.length === eligibleFamilyIds.size;
       const record = store.aid.create({
-        type: values.type,
         organizationId: values.organizationId,
-        familyId: values.familyId,
-        campId: family ? family.campId : session.campId,
+        types: values.types,
+        familyIds,
+        allFamiliesSelected,
+        campId: session.campId,
         date: values.date,
-        quantity: (values.quantity || '').trim(),
-        description: values.description.trim(),
         createdBy: session.id,
         createdAt: new Date().toISOString(),
       });
 
-      notifyFamily(record);
-      toast.success('تم الحفظ', 'تم تسجيل المساعدة في سجل الأسرة.');
+      notifyFamilies(record);
+      toast.success('تم الحفظ', 'تم تسجيل المساعدة في سجل الأسر المستفيدة.');
       go('aid-details.html', { id: record.id });
     },
   });
 }
 
-/**
- * Aid belongs to the family, so every account attached to a member of that
- * family is told about it — not one nominated recipient.
- */
-function notifyFamily(record) {
-  const memberIds = new Set(select.familyMembers(record.familyId).map((member) => member.id));
+/** Every family named as a beneficiary is notified, not one nominated recipient. */
+function notifyFamilies(record) {
+  const memberIds = new Set(
+    record.familyIds.flatMap((familyId) => select.familyMembers(familyId).map((member) => member.id))
+  );
+  const typeLabels = record.types.map(select.aidTypeLabel).join('، ');
   store.users
     .list((row) => row.displacedId && memberIds.has(row.displacedId))
     .forEach((user) => {
@@ -110,7 +112,7 @@ function notifyFamily(record) {
         userId: user.id,
         type: 'info',
         title: 'تمت إضافة مساعدة جديدة لأسرتك',
-        text: `${select.aidTypeLabel(record.type)} من ${select.organizationName(record.organizationId)}.`,
+        text: `${typeLabels} من ${select.organizationName(record.organizationId)}.`,
         createdAt: new Date().toISOString(),
         read: false,
         href: 'aid.html',
