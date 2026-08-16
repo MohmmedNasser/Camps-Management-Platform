@@ -244,7 +244,6 @@ function campFileCard(person, family) {
           definition('رقم الأسرة', person.familyId, { mono: true }),
           definition('رب الأسرة', family ? family.headName : '—'),
           definition('نوع الخيمة', labelOf(TENT_TYPES, person.tentType)),
-          definition('مكان الإقامة الحالي', person.currentResidence),
           definition('محافظة النزوح الأصلية', labelOf(GOVERNORATES, person.originGovernorate)),
           definition('تاريخ النزوح', formatDate(person.displacementDate)),
           definition('الأمراض المزمنة', person.chronicDiseases),

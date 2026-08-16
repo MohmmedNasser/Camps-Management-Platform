@@ -197,7 +197,6 @@ function view(session, { family, aid, documents }) {
             definition('المخيم', family.campName),
             definition('رب الأسرة', family.headName),
             definition('نوع الخيمة', head ? labelOf(TENT_TYPES, head.tentType) : ''),
-            definition('مكان الإقامة', head ? head.currentResidence : ''),
             definition('تاريخ التسجيل', formatDate(family.createdAt)),
             definition('ملاحظات', family.notes),
           ]),
@@ -249,7 +248,7 @@ function membersTable(family) {
           [
             row.chronicDiseases ? badge('مرض مزمن', 'warning') : '',
             row.disability ? badge('إعاقة', 'error') : '',
-            row.isOrphan ? badge('يتيم', 'info') : '',
+            select.isOrphan(row) ? badge('يتيم', 'info') : '',
           ]
             .filter(Boolean)
             .join(' ') || '<span class="u-muted">—</span>',

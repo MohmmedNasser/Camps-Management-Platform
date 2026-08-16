@@ -112,7 +112,7 @@ function header({ person, campName }) {
   const chips = [
     person.chronicDiseases ? badge('مرض مزمن', 'warning') : '',
     person.disability ? badge('إعاقة', 'error') : '',
-    person.isOrphan ? badge('يتيم', 'info') : '',
+    select.isOrphan(person) ? badge('يتيم', 'info') : '',
     person.isPregnant ? badge('حامل', 'success') : '',
     person.isBreastfeeding ? badge('مرضعة', 'success') : '',
   ]
@@ -186,7 +186,7 @@ function personalPanel(person) {
     definition('المحافظة', labelOf(GOVERNORATES, person.governorate)),
     definition('المدينة', person.city),
     definition('الحي / المنطقة', person.area),
-    definition('يتيم', person.isOrphan ? 'نعم' : 'لا'),
+    definition('يتيم', select.isOrphan(person) ? 'نعم' : 'لا'),
     // Maternity is not a yes/no question for a male record.
     definition('حامل', person.gender === 'female' ? (person.isPregnant ? 'نعم' : 'لا') : 'لا ينطبق'),
     definition(
@@ -200,7 +200,6 @@ function displacementPanel(person, campName) {
   return definitionList([
     definition('المخيم', campName),
     definition('نوع الخيمة / وحدة الإيواء', labelOf(TENT_TYPES, person.tentType)),
-    definition('مكان الإقامة الحالي', person.currentResidence),
     definition('محافظة النزوح الأصلية', labelOf(GOVERNORATES, person.originGovernorate)),
     definition('مدينة النزوح الأصلية', person.originCity),
     definition('تاريخ النزوح', formatDate(person.displacementDate)),
