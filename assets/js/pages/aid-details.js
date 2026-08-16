@@ -17,6 +17,7 @@ import {
   definition,
   definitionList,
 } from '../ui/components.js';
+import { inputField } from '../ui/form.js';
 import { icon } from '../ui/icons.js';
 import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
@@ -24,7 +25,7 @@ import { pageUrl, go } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
-import { ROLES, labelOf, AID_TYPES } from '../core/config.js';
+import { ROLES, AID_TYPES } from '../core/config.js';
 
 const shell = mountShell({ active: 'aid.html', title: 'تفاصيل المساعدة' });
 if (shell) init(shell);
@@ -65,27 +66,37 @@ function collect(session, id) {
 
   return {
     record: select.aidRow(raw),
-    family: raw.familyId ? select.familyWithStats(raw.familyId) : null,
     donor: store.organizations.get(raw.organizationId),
     createdByName: (store.users.get(raw.createdBy) || {}).name || '—',
-    siblings: select
-      .searchAid({ familyId: raw.familyId })
+    // Other distributions sharing at least one beneficiary family with this one.
+    siblings: dedupeById(
+      (raw.familyIds || []).flatMap((familyId) => select.searchAid({ familyId }))
+    )
       .filter((row) => row.id !== raw.id)
       .slice(0, 5),
   };
 }
 
-function view(session, { record, family, donor, createdByName, siblings }) {
-  const typeIcon = (AID_TYPES.find((type) => type.value === record.type) || {}).icon || 'aid';
+function dedupeById(rows) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+}
+
+function view(session, { record, donor, createdByName, siblings }) {
+  const typeIcon = (AID_TYPES.find((type) => type.value === (record.types || [])[0]) || {}).icon || 'aid';
 
   return `
     ${breadcrumb([
       { label: 'المساعدات', href: pageUrl('aid.html') },
-      { label: record.typeLabel },
+      { label: record.typeLabels || 'مساعدة' },
     ])}
     ${pageHeader({
-      title: `${record.typeLabel} — ${record.organizationName}`,
-      description: `تم التوزيع في ${formatDate(record.date)}`,
+      title: `${record.typeLabels} — ${record.organizationName}`,
+      description: `تم التوزيع في ${formatDate(record.date)} · ${record.beneficiaryCount} أسرة مستفيدة`,
       actions: `
         ${
           can('aid:update')
@@ -109,13 +120,11 @@ function view(session, { record, family, donor, createdByName, siblings }) {
         ${card({
           title: 'المساعدة الموزَّعة',
           body: `
-            <p class="u-secondary u-mb-4" style="line-height:1.8">${esc(record.description || '—')}</p>
             ${definitionList([
-              definition('نوع المساعدة', labelOf(AID_TYPES, record.type)),
+              definition('نوع المساعدة', record.typeLabels || '—'),
               definition('الجهة المانحة', record.organizationName),
-              definition('الأسرة المستفيدة', record.familyId, { mono: true }),
+              definition('عدد الأسر المستفيدة', String(record.beneficiaryCount)),
               definition('تاريخ التوزيع', formatDate(record.date)),
-              definition('الكمية', record.quantity),
               definition('المخيم', record.campName),
               definition('سُجّلت بواسطة', createdByName),
               definition('تاريخ التسجيل', record.createdAt ? formatDateTime(record.createdAt) : '—'),
@@ -123,7 +132,7 @@ function view(session, { record, family, donor, createdByName, siblings }) {
         })}
 
         ${card({
-          title: 'مساعدات أخرى لنفس الأسرة',
+          title: 'مساعدات أخرى لهذه الأسر',
           flush: true,
           body: siblings.length
             ? `<div class="list">${siblings
@@ -131,10 +140,8 @@ function view(session, { record, family, donor, createdByName, siblings }) {
                   (row) => `
                 <a class="list__row" href="${pageUrl('aid-details.html', { id: row.id })}">
                   <span class="list__main">
-                    <span class="list__title">${esc(row.typeLabel)} — ${esc(row.organizationName)}</span>
-                    <span class="list__meta">${esc(formatDate(row.date))}${
-                      row.quantity ? ` · ${esc(row.quantity)}` : ''
-                    }</span>
+                    <span class="list__title">${esc(row.typeLabels || '—')} — ${esc(row.organizationName)}</span>
+                    <span class="list__meta">${esc(formatDate(row.date))} · ${row.beneficiaryCount} أسرة مستفيدة</span>
                   </span>
                   <span class="list__side">${icon('chevronLeft', { size: 16 })}</span>
                 </a>`
@@ -143,7 +150,7 @@ function view(session, { record, family, donor, createdByName, siblings }) {
             : emptyState({
                 iconName: 'aid',
                 title: 'لا توجد مساعدات أخرى',
-                text: 'هذه أول مساعدة مسجلة لهذه الأسرة.',
+                text: 'لم تتلقَّ هذه الأسر مساعدات أخرى بعد.',
               }),
         })}
       </div>
@@ -156,7 +163,7 @@ function view(session, { record, family, donor, createdByName, siblings }) {
               <span class="stat__icon">${icon(typeIcon, { size: 20 })}</span>
               <div>
                 <div class="u-medium">${esc(record.organizationName)}</div>
-                <div class="u-xs u-muted">${esc(record.typeLabel)}</div>
+                <div class="u-xs u-muted">${esc(record.typeLabels || '—')}</div>
               </div>
             </div>
             ${definitionList([
@@ -167,22 +174,32 @@ function view(session, { record, family, donor, createdByName, siblings }) {
         })}
 
         ${card({
-          title: 'الأسرة المستفيدة',
-          body: definitionList([
-            definition('رقم الأسرة', record.familyId, { mono: true }),
-            definition('رب الأسرة', family ? family.headName : '—'),
-            definition('عدد أفراد الأسرة', family ? String(family.membersCount) : '—'),
-            definition('المخيم', record.campName),
-          ]),
-          foot: family
-            ? button({
-                label: 'ملف الأسرة',
-                variant: 'secondary',
-                iconName: 'family',
-                href: pageUrl('family-details.html', { id: family.id }),
-                block: true,
-              })
-            : '',
+          title: `الأسر المستفيدة (${record.beneficiaryCount})`,
+          flush: true,
+          body: `
+            <div class="u-p-4">
+              ${inputField({
+                name: 'beneficiary-search',
+                label: 'بحث',
+                value: '',
+                placeholder: 'ابحث برقم الأسرة أو رب الأسرة…',
+              })}
+            </div>
+            <div class="list" id="beneficiary-list">
+              ${(record.beneficiaries || [])
+                .map(
+                  (row) => `
+                <a class="list__row" data-beneficiary-row
+                   href="${pageUrl('family-details.html', { id: row.familyId })}">
+                  <span class="list__main">
+                    <span class="list__title">${esc(row.familyId)}</span>
+                    <span class="list__meta">${esc(row.headName)}</span>
+                  </span>
+                  <span class="list__side">${icon('chevronLeft', { size: 16 })}</span>
+                </a>`
+                )
+                .join('')}
+            </div>`,
         })}
       </aside>
     </div>`;
@@ -192,7 +209,7 @@ function wire(content, { record }) {
   delegate(content, 'click', '[data-delete]', async () => {
     const ok = await confirmDialog({
       title: 'حذف سجل المساعدة',
-      text: `سيتم حذف "${record.typeLabel}" المسجلة بتاريخ ${formatDate(record.date)} نهائياً.`,
+      text: `سيتم حذف "${record.typeLabels || 'المساعدة'}" المسجلة بتاريخ ${formatDate(record.date)} نهائياً.`,
       confirmLabel: 'حذف',
     });
     if (!ok) return;
@@ -200,4 +217,14 @@ function wire(content, { record }) {
     toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
     go('aid.html');
   });
+
+  const beneficiarySearch = content.querySelector('#beneficiary-search');
+  if (beneficiarySearch) {
+    beneficiarySearch.addEventListener('input', () => {
+      const term = beneficiarySearch.value.trim().toLowerCase();
+      content.querySelectorAll('[data-beneficiary-row]').forEach((row) => {
+        row.hidden = Boolean(term) && !row.textContent.toLowerCase().includes(term);
+      });
+    });
+  }
 }

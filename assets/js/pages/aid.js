@@ -29,6 +29,8 @@ import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, AID_TYPES, PAGE_SIZE } from '../core/config.js';
+import { AID_COLUMNS, aidExportRow } from '../core/exports.js';
+import { exportSheet, timestampedName } from '../utils/xlsx.js';
 
 const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
 
@@ -83,14 +85,22 @@ function init({ session, content }) {
       description: isOwn
         ? 'سجل المساعدات التي استلمتها أسرتك من الجهات المانحة.'
         : `سجل المساعدات الموزَّعة في ${session.campLabel}.`,
-      actions: can('aid:create')
-        ? button({
-            label: 'تسجيل مساعدة',
-            variant: 'primary',
-            iconName: 'plus',
-            href: pageUrl('aid-create.html'),
-          })
-        : '',
+      actions: `
+        ${
+          !isOwn
+            ? button({ label: 'تصدير إلى Excel', variant: 'secondary', iconName: 'download', attrs: 'data-export' })
+            : ''
+        }
+        ${
+          can('aid:create')
+            ? button({
+                label: 'تسجيل مساعدة',
+                variant: 'primary',
+                iconName: 'plus',
+                href: pageUrl('aid-create.html'),
+              })
+            : ''
+        }`,
     })}
 
     ${
@@ -126,6 +136,8 @@ function init({ session, content }) {
       load(session);
     },
   });
+
+  delegate(content, 'click', '[data-export]', (event, node) => exportRows(session, node));
 
   delegate(content, 'click', '[data-page]', (event, node) => {
     const page = Number(node.dataset.page);
@@ -191,6 +203,39 @@ function collect(session) {
   });
 }
 
+/* ---- Excel export --------------------------------------------------------- */
+
+async function exportRows(session, trigger) {
+  const original = trigger.innerHTML;
+  trigger.disabled = true;
+  trigger.innerHTML = `<span class="btn__spinner"></span><span>جارٍ تجهيز ملف Excel…</span>`;
+
+  try {
+    const rows = await store.load(() => collect(session), 120);
+
+    if (!rows.length) {
+      toast.error('لا توجد نتائج لتصديرها', 'عدّل الفلاتر ثم حاول مرة أخرى.');
+      return;
+    }
+
+    const filtered = Boolean(state.q) || activeFilterCount() > 0;
+    const count = exportSheet({
+      columns: AID_COLUMNS,
+      rows: rows.map(aidExportRow),
+      filename: timestampedName('المساعدات', { filtered }),
+      sheetName: 'المساعدات',
+    });
+
+    toast.success('تم التصدير', `تم تصدير ${count} سجلًا بنجاح.`);
+  } catch (error) {
+    console.error(error);
+    toast.error('تعذر التصدير', 'حدث خطأ أثناء تجهيز الملف، حاول مرة أخرى.');
+  } finally {
+    trigger.disabled = false;
+    trigger.innerHTML = original;
+  }
+}
+
 function summaryView(rows) {
   const organizations = new Set(rows.map((record) => record.organizationId)).size;
   const types = new Set(rows.map((record) => record.type)).size;
@@ -218,16 +263,18 @@ function resultsView(session, rows) {
 
   const columns = [
     {
-      key: 'typeLabel',
+      key: 'typeLabels',
       label: 'نوع المساعدة',
       primary: true,
-      cell: (row) => cellMain(row.typeLabel, row.description),
+      cell: (row) => cellMain(row.typeLabels || '—'),
     },
     { key: 'organizationName', label: 'الجهة المانحة' },
-    { key: 'familyId', label: 'الأسرة المستفيدة', cell: (row) => cellMono(row.familyId) },
-    { key: 'familyHeadName', label: 'رب الأسرة' },
+    {
+      key: 'beneficiaryCount',
+      label: 'عدد الأسر المستفيدة',
+      cell: (row) => cellMono(String(row.beneficiaryCount)),
+    },
     ...(isSuper ? [{ key: 'campName', label: 'المخيم' }] : []),
-    { key: 'quantity', label: 'الكمية', cell: (row) => esc(row.quantity || '—') },
     { key: 'date', label: 'تاريخ التوزيع', cell: (row) => formatDate(row.date) },
     {
       key: 'actions',
@@ -273,13 +320,12 @@ function ownHistoryView(rows, slice, page) {
       <li class="card">
         <div class="card__body">
           <div class="row row--between u-gap-3">
-            <span class="u-medium">${esc(record.typeLabel)}</span>
+            <span class="u-medium">${esc(record.typeLabels || '—')}</span>
             <span class="u-sm u-secondary">${esc(formatDate(record.date))}</span>
           </div>
-          <p class="u-sm u-secondary u-mt-2" style="line-height:1.8">${esc(record.description || '—')}</p>
           <div class="row u-gap-2 u-wrap u-mt-3">
             <span class="chip chip--outline">${esc(record.organizationName)}</span>
-            ${record.quantity ? `<span class="chip chip--outline">${esc(record.quantity)}</span>` : ''}
+            <span class="chip chip--outline">${record.beneficiaryCount} أسرة مستفيدة</span>
           </div>
         </div>
       </li>`
