@@ -266,13 +266,30 @@ export function validateData() {
     if (!record.organizationId || !orgIds.has(record.organizationId)) {
       problems.push(`المساعدة ${record.id} تشير إلى جهة مانحة غير موجودة`);
     }
-    if (!record.familyId || !familyIds.has(record.familyId)) {
-      problems.push(`المساعدة ${record.id} تشير إلى أسرة غير موجودة`);
+    if (!Array.isArray(record.familyIds) || !record.familyIds.length) {
+      problems.push(`المساعدة ${record.id} لا تحتوي على أسر مستفيدة`);
+    } else {
+      record.familyIds.forEach((id) => {
+        if (!familyIds.has(id)) {
+          problems.push(`المساعدة ${record.id} تشير إلى أسرة غير موجودة (${id})`);
+        }
+      });
     }
-    // Aid records the assistance itself, never its price or an individual
-    // recipient — a leftover field means stale data.
-    if ('value' in record || 'displacedId' in record) {
-      problems.push(`المساعدة ${record.id} تحتوي على حقول ملغاة (القيمة أو المستلم)`);
+    if (!Array.isArray(record.types) || !record.types.length) {
+      problems.push(`المساعدة ${record.id} لا تحتوي على نوع مساعدة`);
+    }
+    // Aid records the assistance itself, never its price, an individual
+    // recipient, or a free-text quantity/description — a leftover field
+    // means stale data from before the multi-type/multi-family rework.
+    if (
+      'value' in record ||
+      'displacedId' in record ||
+      'type' in record ||
+      'familyId' in record ||
+      'quantity' in record ||
+      'description' in record
+    ) {
+      problems.push(`المساعدة ${record.id} تحتوي على حقول ملغاة (القيمة أو المستلم أو الشكل القديم)`);
     }
   });
 
