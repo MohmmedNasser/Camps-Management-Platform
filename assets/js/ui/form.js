@@ -161,6 +161,33 @@ export function checkboxField({ name, label, description = '', checked = false, 
   return wrap(name, inner, { full });
 }
 
+/**
+ * A labelled group of checkboxes sharing one `name`. `readForm` collects the
+ * checked ones into an array under that name — used where a single field
+ * must allow more than one selection (e.g. aid type, beneficiary families).
+ */
+export function checkboxGroupField({ name, label, options, values = [], required = false, hint = '', full = true }) {
+  const selected = new Set(values);
+  const items = options
+    .map(
+      (option, index) => `
+      <label class="check" for="${esc(name)}-${index}">
+        <input class="check__input" type="checkbox" id="${esc(name)}-${index}" name="${esc(name)}"
+          value="${esc(option.value)}" data-group="true"${selected.has(option.value) ? ' checked' : ''}>
+        <span class="check__body">
+          <span class="check__title">${esc(option.label)}</span>
+        </span>
+      </label>`
+    )
+    .join('');
+
+  const inner = `
+    <span class="label">${esc(label)}${required ? '<span class="label__required">*</span>' : ''}</span>
+    <div class="checkbox-group" role="group" aria-label="${esc(label)}">${items}</div>`;
+
+  return wrap(name, inner, { full, hint });
+}
+
 export function switchField({ name, label, description = '', checked = false }) {
   return `
     <label class="switch" for="${esc(name)}">
@@ -244,8 +271,14 @@ export function readForm(form) {
   const values = {};
   qsa('input, select, textarea', form).forEach((node) => {
     if (!node.name) return;
-    if (node.type === 'checkbox') values[node.name] = node.checked;
-    else if (node.type === 'radio') {
+    if (node.type === 'checkbox') {
+      if (node.dataset.group === 'true') {
+        if (!Array.isArray(values[node.name])) values[node.name] = [];
+        if (node.checked) values[node.name].push(node.value);
+      } else {
+        values[node.name] = node.checked;
+      }
+    } else if (node.type === 'radio') {
       if (node.checked) values[node.name] = node.value;
       else if (!(node.name in values)) values[node.name] = '';
     } else values[node.name] = node.value;
