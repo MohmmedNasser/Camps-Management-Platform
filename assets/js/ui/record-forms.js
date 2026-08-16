@@ -21,8 +21,8 @@ import {
   selectField,
   textareaField,
   fieldset,
-  radioCards,
   checkboxField,
+  checkboxGroupField,
 } from './form.js';
 import {
   GENDERS,
@@ -550,19 +550,11 @@ export function readMember(values, index) {
  */
 export function aidFields(values = {}, options = {}) {
   const { organizations = [], families = [] } = options;
+  const selectedFamilyIds = new Set(values.familyIds || []);
 
   return [
-    radioCards({
-      name: 'type',
-      label: 'نوع المساعدة',
-      options: AID_TYPES.map((type) => ({ value: type.value, label: type.label })),
-      value: values.type || 'food',
-      required: true,
-    }),
-
     fieldset({
-      legend: 'الجهة المانحة والأسرة المستفيدة',
-      hint: 'تُسجَّل المساعدة باسم الأسرة، لا باسم فرد بعينه.',
+      legend: 'الجهة المانحة وتاريخ التوزيع',
       fields: [
         selectField({
           name: 'organizationId',
@@ -572,13 +564,6 @@ export function aidFields(values = {}, options = {}) {
           required: true,
           hint: 'مؤسسة أو مبادرة أو شخص.',
         }),
-        selectField({
-          name: 'familyId',
-          label: 'الأسرة المستفيدة',
-          options: families,
-          value: values.familyId,
-          required: true,
-        }),
         inputField({
           name: 'date',
           label: 'تاريخ التوزيع',
@@ -586,26 +571,102 @@ export function aidFields(values = {}, options = {}) {
           value: toInputDate(values.date),
           required: true,
         }),
-        inputField({
-          name: 'quantity',
-          label: 'الكمية',
-          value: values.quantity,
-          optional: true,
-          placeholder: 'مثال: 1 طرد، 500 لتر',
-        }),
       ],
     }),
 
-    textareaField({
-      name: 'description',
-      label: 'وصف المساعدة',
-      value: values.description,
+    checkboxGroupField({
+      name: 'types',
+      label: 'نوع المساعدة',
+      options: AID_TYPES.map((type) => ({ value: type.value, label: type.label })),
+      values: values.types || [],
       required: true,
-      rows: 3,
-      placeholder: 'مثال: أدوات تنظيف مقدمة من جمعية تطوير بيت لاهيا',
-      hint: 'اكتب ما تم توزيعه فعلياً ومن قدّمه.',
     }),
+
+    `<div class="field field--full" data-field="familyIds">
+      <span class="label">الأسر المستفيدة<span class="label__required" aria-hidden="true">*</span></span>
+      <div class="aid-family-picker" data-aid-family-picker>
+        ${inputField({ name: '__familySearch', label: 'بحث', value: '', placeholder: 'ابحث باسم رب الأسرة أو رقم الأسرة…' })}
+        <div class="row u-gap-2 u-wrap u-mt-2">
+          <button type="button" class="btn btn--secondary" data-select-all-families>تحديد جميع الأسر</button>
+          <button type="button" class="btn btn--ghost" data-deselect-all-families>إلغاء تحديد الكل</button>
+        </div>
+        <p class="u-sm u-secondary u-mt-2" data-family-count aria-live="polite"></p>
+        <div class="checkbox-group u-mt-2" data-family-checklist role="group" aria-label="الأسر المستفيدة">
+          ${families
+            .map(
+              (family, index) => `
+            <label class="check" for="familyIds-${index}" data-family-option="${esc(family.value)}">
+              <input class="check__input" type="checkbox" id="familyIds-${index}" name="familyIds"
+                value="${esc(family.value)}" data-group="true"${selectedFamilyIds.has(family.value) ? ' checked' : ''}>
+              <span class="check__body"><span class="check__title">${esc(family.label)}</span></span>
+            </label>`
+            )
+            .join('')}
+        </div>
+      </div>
+      <p class="field__hint" id="familyIds-hint"></p>
+      <p class="field__msg field__msg--error" id="familyIds-error" role="alert"></p>
+    </div>`,
   ].join('');
+}
+
+/**
+ * Wire the family search filter, the "تحديد جميع الأسر" / "إلغاء تحديد
+ * الكل" buttons, and the live selected-count readout inside a rendered
+ * `aidFields()` block. Search only hides/shows checkbox rows — unchecking a
+ * family after "select all" is a plain click on its own box, and the count
+ * readout reacts to that click too since it listens on the container.
+ */
+export function bindAidFamilyPicker(scope) {
+  const picker = scope.querySelector('[data-aid-family-picker]');
+  if (!picker) return;
+
+  const search = picker.querySelector('input[name="__familySearch"]');
+  const options = () => Array.from(picker.querySelectorAll('[data-family-option]'));
+  const checkboxes = () => Array.from(picker.querySelectorAll('input[type="checkbox"]'));
+  const count = picker.querySelector('[data-family-count]');
+
+  const syncCount = () => {
+    if (!count) return;
+    const selected = checkboxes().filter((box) => box.checked).length;
+    count.textContent = selected ? `تم تحديد ${selected} أسرة` : 'لم يتم تحديد أي أسرة بعد';
+  };
+
+  if (search) {
+    search.addEventListener('input', () => {
+      const term = search.value.trim().toLowerCase();
+      options().forEach((option) => {
+        const label = option.textContent.toLowerCase();
+        option.hidden = Boolean(term) && !label.includes(term);
+      });
+    });
+  }
+
+  picker.addEventListener('change', (event) => {
+    if (event.target.matches('input[type="checkbox"]')) syncCount();
+  });
+
+  const selectAll = picker.querySelector('[data-select-all-families]');
+  if (selectAll) {
+    selectAll.addEventListener('click', () => {
+      checkboxes().forEach((box) => {
+        box.checked = true;
+      });
+      syncCount();
+    });
+  }
+
+  const deselectAll = picker.querySelector('[data-deselect-all-families]');
+  if (deselectAll) {
+    deselectAll.addEventListener('click', () => {
+      checkboxes().forEach((box) => {
+        box.checked = false;
+      });
+      syncCount();
+    });
+  }
+
+  syncCount();
 }
 
 /* ---- Camp --------------------------------------------------------------- */
@@ -844,11 +905,20 @@ export function familySchema() {
 
 export function aidSchema() {
   return {
-    type: [rules.required('نوع المساعدة')],
     organizationId: [rules.required('الجهة المانحة')],
-    familyId: [rules.required('الأسرة المستفيدة')],
     date: [rules.required('تاريخ التوزيع'), rules.pastDate('تاريخ التوزيع')],
-    description: [rules.required('وصف المساعدة'), rules.minLength(5, 'وصف المساعدة')],
+    types: [
+      rules.custom(
+        (value) => Array.isArray(value) && value.length > 0,
+        'يرجى اختيار نوع مساعدة واحد على الأقل.'
+      ),
+    ],
+    familyIds: [
+      rules.custom(
+        (value) => Array.isArray(value) && value.length > 0,
+        'يرجى اختيار أسرة واحدة على الأقل.'
+      ),
+    ],
   };
 }
 
