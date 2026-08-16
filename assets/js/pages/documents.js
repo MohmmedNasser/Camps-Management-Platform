@@ -65,14 +65,10 @@ function downloadDocument(row) {
 const shell = mountShell({ active: 'documents.html', title: 'الملفات والمستندات' });
 if (shell) init(shell);
 
-function init({ session, content }) {
-  const query = params();
-  state.q = query.q || '';
-  state.category = query.category || '';
-  state.campId = query.campId || '';
-
+/** Rebuilt fresh on every call so the sheet never shows stale values. */
+function filterSpec(session) {
   const isSuper = session.role === ROLES.SUPER_ADMIN;
-  const filters = [
+  return [
     {
       name: 'category',
       label: 'نوع المستند',
@@ -83,6 +79,13 @@ function init({ session, content }) {
       ? [{ name: 'campId', label: 'المخيم', options: select.campOptions(session), value: state.campId }]
       : []),
   ];
+}
+
+function init({ session, content }) {
+  const query = params();
+  state.q = query.q || '';
+  state.category = query.category || '';
+  state.campId = query.campId || '';
 
   content.innerHTML = `
     ${pageHeader({
@@ -104,7 +107,7 @@ function init({ session, content }) {
     ${toolbar({
       searchValue: state.q,
       searchPlaceholder: 'ابحث باسم المستند أو صاحبه…',
-      filters,
+      filters: filterSpec(session),
       activeCount: [state.category, state.campId].filter(Boolean).length,
       modal: true,
     })}
@@ -119,6 +122,7 @@ function init({ session, content }) {
       setParams(values);
       load(session);
     },
+    getFilters: () => filterSpec(session),
   });
 
   delegate(content, 'click', '[data-upload]', () => openUploader(session));

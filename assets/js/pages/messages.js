@@ -35,6 +35,11 @@ const state = { q: '', status: '', subject: '' };
 const shell = mountShell({ active: 'messages.html', title: 'الرسائل' });
 if (shell) init(shell);
 
+/** Rebuilt fresh on every call so the sheet never shows stale values. */
+function filterSpec() {
+  return [{ name: 'subject', label: 'الموضوع', options: MESSAGE_SUBJECTS, value: state.subject }];
+}
+
 function init({ session, content }) {
   const query = params();
   state.q = query.q || '';
@@ -62,9 +67,7 @@ function init({ session, content }) {
     ${toolbar({
       searchValue: state.q,
       searchPlaceholder: 'ابحث في نص الرسائل…',
-      filters: [
-        { name: 'subject', label: 'الموضوع', options: MESSAGE_SUBJECTS, value: state.subject },
-      ],
+      filters: filterSpec(),
       activeCount: state.subject ? 1 : 0,
       modal: true,
     })}
@@ -77,6 +80,7 @@ function init({ session, content }) {
       setParams(values);
       load(session);
     },
+    getFilters: () => filterSpec(),
   });
 
   delegate(content, 'click', '[data-chip]', (event, node) => {

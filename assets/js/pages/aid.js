@@ -50,11 +50,10 @@ function activeFilterCount() {
   return ['type', 'organizationId', 'familyId'].filter((key) => state[key]).length;
 }
 
-function init({ session, content }) {
-  readQuery();
+/** Rebuilt fresh on every call so the sheet never shows stale values. */
+function filterSpec(session) {
   const isOwn = session.role === ROLES.DISPLACED;
-
-  const filters = [
+  return [
     {
       name: 'type',
       label: 'نوع المساعدة',
@@ -78,6 +77,11 @@ function init({ session, content }) {
           },
         ]),
   ];
+}
+
+function init({ session, content }) {
+  readQuery();
+  const isOwn = session.role === ROLES.DISPLACED;
 
   content.innerHTML = `
     ${pageHeader({
@@ -119,7 +123,7 @@ function init({ session, content }) {
       searchPlaceholder: isOwn
         ? 'ابحث في مساعداتك…'
         : 'ابحث برقم الأسرة أو رب الأسرة أو الجهة المانحة…',
-      filters,
+      filters: filterSpec(session),
       activeCount: activeFilterCount(),
       modal: true,
     })}
@@ -135,6 +139,7 @@ function init({ session, content }) {
       setParams({ ...values, page: '' });
       load(session);
     },
+    getFilters: () => filterSpec(session),
   });
 
   delegate(content, 'click', '[data-export]', (event, node) => exportRows(session, node));

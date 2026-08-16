@@ -246,16 +246,21 @@ function tableSample() {
     })}`;
 }
 
+/** Static demo values — shared between the initial render and the reopened sheet. */
+function demoFilterSpec() {
+  return [
+    { name: 'ds-camp', label: 'المخيم', options: [{ value: 'camp-1', label: 'مخيم النور' }, { value: 'camp-2', label: 'مخيم الرحمة' }] },
+    { name: 'ds-gender', label: 'الجنس', options: GENDERS },
+    { name: 'ds-aid', label: 'نوع المساعدة', options: AID_TYPES.map((type) => ({ value: type.value, label: type.label })) },
+  ];
+}
+
 /** Search box, filter panel and quick chips — the head of every list page. */
 function toolbarSample() {
   return `
     ${toolbar({
       searchPlaceholder: 'ابحث بالاسم أو رقم الهوية أو الهاتف…',
-      filters: [
-        { name: 'ds-camp', label: 'المخيم', options: [{ value: 'camp-1', label: 'مخيم النور' }, { value: 'camp-2', label: 'مخيم الرحمة' }] },
-        { name: 'ds-gender', label: 'الجنس', options: GENDERS },
-        { name: 'ds-aid', label: 'نوع المساعدة', options: AID_TYPES.map((type) => ({ value: type.value, label: type.label })) },
-      ],
+      filters: demoFilterSpec(),
       actions: button({ label: 'إضافة نازح', variant: 'primary', iconName: 'plus' }),
       modal: true,
     })}
@@ -393,7 +398,7 @@ ready(() => {
     ${section('النوافذ والتنبيهات المنبثقة', overlays())}`;
 
   initTabs(root);
-  initToolbar(root, { onChange: () => {} });
+  initToolbar(root, { onChange: () => {}, getFilters: demoFilterSpec });
   initDropzone(qs('#ds-upload', root));
 
   on(qs('[data-open-confirm]'), 'click', async () => {

@@ -36,6 +36,22 @@ const state = { q: '', campId: '', status: '' };
 const shell = mountShell({ active: 'camp-admins.html', title: 'مسؤولو المخيمات' });
 if (shell) init(shell);
 
+/** Rebuilt fresh on every call so the sheet never shows stale values. */
+function filterSpec() {
+  return [
+    { name: 'campId', label: 'المخيم', options: select.campOptions(), value: state.campId },
+    {
+      name: 'status',
+      label: 'حالة الحساب',
+      options: [STATUS.ACTIVE, STATUS.DISABLED].map((value) => ({
+        value,
+        label: STATUS_LABELS[value],
+      })),
+      value: state.status,
+    },
+  ];
+}
+
 function init({ session, content }) {
   const query = params();
   state.q = query.q || '';
@@ -59,18 +75,7 @@ function init({ session, content }) {
     ${toolbar({
       searchValue: state.q,
       searchPlaceholder: 'ابحث بالاسم أو البريد الإلكتروني أو الهاتف…',
-      filters: [
-        { name: 'campId', label: 'المخيم', options: select.campOptions(), value: state.campId },
-        {
-          name: 'status',
-          label: 'حالة الحساب',
-          options: [STATUS.ACTIVE, STATUS.DISABLED].map((value) => ({
-            value,
-            label: STATUS_LABELS[value],
-          })),
-          value: state.status,
-        },
-      ],
+      filters: filterSpec(),
       activeCount: [state.campId, state.status].filter(Boolean).length,
       modal: true,
     })}
@@ -85,6 +90,7 @@ function init({ session, content }) {
       setParams(values);
       load(session);
     },
+    getFilters: () => filterSpec(),
   });
 
   delegate(content, 'click', '[data-create]', () => openEditor(session, null));
