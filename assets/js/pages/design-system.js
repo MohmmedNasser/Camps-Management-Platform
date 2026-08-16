@@ -257,6 +257,7 @@ function toolbarSample() {
         { name: 'ds-aid', label: 'نوع المساعدة', options: AID_TYPES.map((type) => ({ value: type.value, label: type.label })) },
       ],
       actions: button({ label: 'إضافة نازح', variant: 'primary', iconName: 'plus' }),
+      modal: true,
     })}
     ${filterChips(
       [

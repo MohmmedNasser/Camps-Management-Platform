@@ -111,6 +111,7 @@ function init({ session, content }) {
         : 'ابحث برقم الأسرة أو رب الأسرة أو الجهة المانحة…',
       filters,
       activeCount: activeFilterCount(),
+      modal: true,
     })}
     <div id="results">${skeletonTable(6)}</div>`;
 

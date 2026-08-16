@@ -66,6 +66,7 @@ function init({ session, content }) {
         { name: 'subject', label: 'الموضوع', options: MESSAGE_SUBJECTS, value: state.subject },
       ],
       activeCount: state.subject ? 1 : 0,
+      modal: true,
     })}
     <div id="results">${skeletonTable(5)}</div>`;
 

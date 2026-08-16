@@ -72,6 +72,7 @@ function init({ session, content }) {
         },
       ],
       activeCount: [state.campId, state.status].filter(Boolean).length,
+      modal: true,
     })}
     <div id="results">${skeletonTable(4)}</div>`;
 

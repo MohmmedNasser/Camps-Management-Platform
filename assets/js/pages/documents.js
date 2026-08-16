@@ -81,6 +81,7 @@ function init({ session, content }) {
       searchPlaceholder: 'ابحث باسم المستند أو صاحبه…',
       filters,
       activeCount: [state.category, state.campId].filter(Boolean).length,
+      modal: true,
     })}
     <div id="results">${skeletonTable(5)}</div>`;
 
