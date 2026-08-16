@@ -610,6 +610,17 @@ export function familyOptions(campId = '') {
     .sort((a, b) => a.value.localeCompare(b.value));
 }
 
+/**
+ * Filter an already-resolved `familyOptions()` list by family ID or head
+ * name — the label already carries both, so one substring match covers the
+ * search behaviour every family multi-select needs.
+ */
+export function searchFamilyOptions(options, query = '') {
+  const term = query.trim().toLowerCase();
+  if (!term) return options;
+  return options.filter((option) => option.label.toLowerCase().includes(term));
+}
+
 export function personOptions({ campId = '', familyId = '' } = {}) {
   return store.displaced
     .list((person) => {

@@ -10,7 +10,8 @@ import { toInputDate } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import { button, alert, breadcrumb, pageHeader, emptyState } from '../ui/components.js';
 import { bindForm } from '../ui/form.js';
-import { aidFields, aidSchema, bindAidFamilyPicker } from '../ui/record-forms.js';
+import { aidFields, aidSchema, familyCountLabel } from '../ui/record-forms.js';
+import { initMultiSelect } from '../ui/combobox.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import * as store from '../core/store.js';
@@ -63,7 +64,10 @@ function init({ session, content }) {
           familyIds: familyId ? [familyId] : [],
           date: toInputDate(new Date()),
         },
-        { organizations, families }
+        {
+          organizations,
+          selectedFamilies: familyId ? families.filter((f) => f.value === familyId) : [],
+        }
       )}
       <div class="form-actions">
         ${button({ label: 'إلغاء', variant: 'secondary', href: pageUrl('aid.html') })}
@@ -72,7 +76,12 @@ function init({ session, content }) {
     </form>`;
 
   const form = qs('#aid-form', content);
-  bindAidFamilyPicker(form);
+  initMultiSelect(form, {
+    name: 'familyIds',
+    search: (query) => select.searchFamilyOptions(families, query),
+    selectAllSource: () => families,
+    countLabel: familyCountLabel,
+  });
 
   bindForm(form, {
     schema: aidSchema(),

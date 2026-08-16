@@ -14,7 +14,8 @@ import {
   skeletonForm,
 } from '../ui/components.js';
 import { bindForm } from '../ui/form.js';
-import { aidFields, aidSchema, formSummary, bindAidFamilyPicker } from '../ui/record-forms.js';
+import { aidFields, aidSchema, formSummary, familyCountLabel } from '../ui/record-forms.js';
+import { initMultiSelect } from '../ui/combobox.js';
 import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
@@ -72,7 +73,10 @@ function render({ session, content, record }) {
     ${formSummary([row.typeLabels, row.organizationName, `${row.beneficiaryCount} أسرة مستفيدة`])}
 
     <form class="form" id="aid-form" novalidate>
-      ${aidFields(record, { organizations, families })}
+      ${aidFields(record, {
+        organizations,
+        selectedFamilies: families.filter((f) => (record.familyIds || []).includes(f.value)),
+      })}
       <div class="form-actions">
         ${button({
           label: 'إلغاء',
@@ -84,7 +88,12 @@ function render({ session, content, record }) {
     </form>`;
 
   const form = qs('#aid-form', content);
-  bindAidFamilyPicker(form);
+  initMultiSelect(form, {
+    name: 'familyIds',
+    search: (query) => select.searchFamilyOptions(families, query),
+    selectAllSource: () => families,
+    countLabel: familyCountLabel,
+  });
 
   bindForm(form, {
     schema: aidSchema(),
