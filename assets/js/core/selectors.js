@@ -74,7 +74,10 @@ export function scopeFilter(session) {
   if (session.role === ROLES.CAMP_ADMIN) return (row) => row.campId === session.campId;
   const person = store.displaced.get(session.displacedId);
   const familyId = person ? person.familyId : null;
-  return (row) => row.familyId === familyId || row.displacedId === session.displacedId;
+  return (row) =>
+    row.familyId === familyId ||
+    (Array.isArray(row.familyIds) && row.familyIds.includes(familyId)) ||
+    row.displacedId === session.displacedId;
 }
 
 /* ---- Families ---------------------------------------------------------- */

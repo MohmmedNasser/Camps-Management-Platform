@@ -284,10 +284,8 @@ function membersTable(family) {
 function aidRow(record, { linked = true } = {}) {
   const inner = `
     <span class="list__main">
-      <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
-      <span class="list__meta">${esc(formatDate(record.date))}${
-        record.quantity ? ` · ${esc(record.quantity)}` : ''
-      }</span>
+      <span class="list__title">${esc(record.typeLabels || '—')} — ${esc(record.organizationName)}</span>
+      <span class="list__meta">${esc(formatDate(record.date))}</span>
     </span>`;
 
   if (!linked) return `<div class="list__row">${inner}</div>`;

@@ -238,8 +238,8 @@ async function exportRows(session, trigger) {
 
 function summaryView(rows) {
   const organizations = new Set(rows.map((record) => record.organizationId)).size;
-  const types = new Set(rows.map((record) => record.type)).size;
-  const families = new Set(rows.map((record) => record.familyId)).size;
+  const types = new Set(rows.flatMap((record) => record.types || [])).size;
+  const families = new Set(rows.flatMap((record) => record.familyIds || [])).size;
 
   return `
     <div class="grid grid--4 u-mb-5">

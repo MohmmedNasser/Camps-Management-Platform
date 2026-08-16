@@ -136,10 +136,8 @@ function aidRow(record) {
   return `
     <a class="list__row" href="${pageUrl('aid-details.html', { id: record.id })}">
       <span class="list__main">
-        <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
-        <span class="list__meta">${esc(record.familyHeadName)} · <span class="mono">${esc(
-          record.familyId
-        )}</span> · ${esc(formatDate(record.date))}</span>
+        <span class="list__title">${esc(record.typeLabels || '—')} — ${esc(record.organizationName)}</span>
+        <span class="list__meta">${record.beneficiaryCount} أسرة مستفيدة · ${esc(formatDate(record.date))}</span>
       </span>
       <span class="list__side">${icon('chevronLeft', { size: 16 })}</span>
     </a>`;
@@ -150,10 +148,8 @@ function ownAidRow(record) {
   return `
     <div class="list__row">
       <span class="list__main">
-        <span class="list__title">${esc(record.typeLabel)} — ${esc(record.organizationName)}</span>
-        <span class="list__meta">${esc(formatDate(record.date))}${
-          record.quantity ? ` · ${esc(record.quantity)}` : ''
-        }</span>
+        <span class="list__title">${esc(record.typeLabels || '—')} — ${esc(record.organizationName)}</span>
+        <span class="list__meta">${esc(formatDate(record.date))}</span>
       </span>
     </div>`;
 }
