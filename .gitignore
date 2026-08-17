@@ -1,0 +1,21 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Generated from .env by `npm run frontend:config`. Contains a publishable key,
+# which is safe to expose in a browser, but is still project-specific.
+assets/js/core/supabase-config.js
+
+# Backend tooling dependencies. The frontend prototype itself has none.
+node_modules/
+
+# Supabase CLI local state
+supabase/.branches/
+supabase/.temp/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
