@@ -12,8 +12,9 @@
     "test:schema": "node --test tests/schema.test.mjs",
     "test:rls": "node --test tests/rls.test.mjs",
     "test:phase2": "node --test tests/phase2-business-logic.test.mjs",
+    "test:phase3": "node --test tests/phase3-documents.test.mjs",
     "test:browser-smoke": "node --test tests/browser-smoke.test.mjs",
-    "test:all": "npm run test:schema && npm run test:phase2 && npm run test:browser-smoke",
+    "test:all": "npm run test:schema && npm run test:phase2 && npm run test:phase3 && npm run test:browser-smoke",
     "frontend:config": "node scripts/write-frontend-config.mjs"
   },
   "dependencies": {

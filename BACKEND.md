@@ -594,3 +594,103 @@ npm run test:all            # test:schema && test:phase2 && test:browser-smoke, 
 ### Testing personas used above
 
 Same seeded accounts as §12's isolation matrix (`assets/js/data/mock-data.js`), all password `123456`: `super@camps.ps` (Super Admin), `admin@camps.ps` (Camp Admin, مخيم النور), `nour@camps.ps` (Camp Admin, مخيم الرحمة), `ahmad@camps.ps` (displaced, FAM-000001).
+
+---
+
+## 16 · Phase 3 — Cloudinary document storage
+
+Binary files now upload to, download from and delete on Cloudinary through three Supabase Edge Functions. `documents` keeps its Phase 1 shape unchanged — it already carried every Cloudinary column this phase needed. Postgres never sees a byte of file content; Cloudinary never sees a byte of the API secret leave its own dashboard.
+
+Before writing anything, the live project was inspected directly (not assumed): `documents`' RLS policies, its existing CHECK constraints (`documents_has_owner`, `documents_cloudinary_complete`), its indexes, and the current frontend document-handling code (`assets/js/pages/documents.js`, `ui/upload.js`, `assets/js/supabase/documents.js`). No Phase 1/2 blocker was found on the database side. One real blocker *was* found and is documented in §16.6 below.
+
+### 16.1 · Architecture
+
+```
+Browser
+  │  supabase.functions.invoke('documents-upload', FormData)
+  ▼
+Edge Function (Deno)                    ← the ONLY place the Cloudinary secret exists
+  │  caller-scoped Supabase client (Authorization: Bearer <user JWT>, publishable key)
+  │  every DB read/write goes through this client — RLS is still the real boundary
+  ▼
+Cloudinary (type: private)              ← binaries live here, never in Postgres
+  │
+  ▼
+documents row (metadata only)           ← Postgres, same shape as Phase 1
+```
+
+Three functions, each `verify_jwt: true` at the platform gateway (a request with no valid JWT never reaches the function body):
+
+- **`documents-upload`** — validates the file, resolves the owner (`family_member_id` / `family_id` / `registration_request_id`) and `camp_id` **server-side** via an RLS-scoped `select` (a client-supplied `camp_id` is never trusted — §26), signs and uploads to Cloudinary, inserts the metadata row through the *same* caller-scoped client (so `documents_insert_scoped` re-checks independently — defense in depth), and destroys the just-uploaded Cloudinary asset if the metadata insert fails (§36 orphan cleanup).
+- **`documents-access`** — download **and** preview share this one function (§18: no separate weaker path). An RLS-scoped `select` is the authorization gate — `documents_select_scoped` already covers super_admin (all), camp_admin (own camp), displaced (own family) exactly, and a denied/nonexistent id returns the same generic 404 either way (§28/§29: existence is never leaked). The function fetches the bytes from Cloudinary itself and streams them back — **the browser never receives a Cloudinary URL or credential**, so there is nothing to leak by inspecting network traffic or guessing an id.
+- **`documents-delete`** — `documents_select_scoped` (broader) is *not* enough to prove delete authorization, so the function explicitly re-checks the caller's own `profiles.role`/`camp_id` against `documents_delete_admin`'s shape (super_admin, or camp_admin in their own camp) **before** touching Cloudinary. Order: verify → Cloudinary `destroy` → delete the metadata row only if the destroy succeeded or the asset was already gone. A genuine Cloudinary failure leaves the row intact and returns an error (§19) rather than silently losing the reference.
+
+`supabase/functions/_shared/` holds the code all three share: `cloudinary.ts` (signing, upload/download/destroy, file-type allowlist, `MAX_FILE_SIZE`), `supabase-client.ts` (the caller-scoped client builder), `cors.ts`, `http.ts` (response helpers + the `Content-Disposition` encoder — see §16.6).
+
+### 16.2 · Cloudinary signing
+
+One algorithm, Cloudinary's standard Admin/Upload API request signature (confirmed against `cloudinary.com/documentation/authentication_signatures`), reused for all three Cloudinary calls: sort the signable params alphabetically as `name=value`, join with `&`, append the API secret, SHA-1 hex digest.
+
+- **Upload** — `type: 'private'` (never publicly reachable by a plain URL — §9, §29), `public_id` is a fresh `crypto.randomUUID()` (never the national ID — §29), folder `camps-platform/documents/<identity|medical|other>/` (§14).
+- **Download** — Cloudinary's SDKs expose a `private_download_url` *helper* that signs a link to `{api_base}/v1_1/<cloud>/<resource_type>/download`, documented as SDK behaviour rather than a standalone REST reference. Reconstructed here with the same generic signature and confirmed working live against a real Cloudinary account during verification (200, correct bytes, correct content-type). If Cloudinary ever changes this path the failure mode is a clean 401/404 (fails closed — no file served to the wrong caller), not a leak.
+- **Destroy** — signed `POST .../destroy`; `result: 'ok'` or `'not found'` both count as "gone" for orphan-cleanup and delete purposes.
+
+### 16.3 · File validation and limits
+
+One centralized `MAX_FILE_SIZE` (5 MB, matching the number already shown in `ui/upload.js`'s dropzone hint) and one allowlist covering `image/jpeg`, `image/png`, `image/webp`, `application/pdf`. The declared `Content-Type` is never trusted alone (§11) — each type also has a magic-byte check against the actual first bytes of the file (JPEG `FF D8 FF`, PNG's 8-byte signature, WEBP's `RIFF....WEBP`, PDF's `%PDF`), so a renamed executable with a spoofed `image/jpeg` type is rejected before it ever reaches Cloudinary. Oversized files are rejected before the magic-byte check even runs (cheaper check first).
+
+### 16.4 · Migration
+
+One new migration, `20260817200000_phase3_document_privilege_guard.sql` — verified first that Phase 1's `documents_has_owner` and `documents_cloudinary_complete` CHECK constraints and every FK index already existed, so nothing redundant was added. What Phase 1 left open: RLS decides which **rows** may be updated, not which **columns** (§7 "Beyond RLS") — `documents_update_admin` lets an admin edit a document's `name`/`category`, but nothing stopped that same UPDATE from also reassigning `family_id`, `camp_id`, or the Cloudinary identity columns, which spec §20 requires be effectively immutable. `private.guard_document_privileges()`, a `BEFORE UPDATE` trigger following the exact pattern of `guard_profile_privileges()`/`guard_notification_update()`, closes that: only `name` and `category` may change via plain UPDATE; ownership and Cloudinary-identity columns raise `42501`. Skips the check for trusted server contexts via the existing `private.is_browser_session()`.
+
+### 16.5 · Frontend
+
+`assets/js/supabase/cloudinary.js` is the new data-access module — `uploadDocument`, `getDocumentBlob`, `deleteDocumentAsset` — calling the three functions through the existing shared client's `.functions.invoke()` (no module here constructs its own client, per the rule every other file in this folder already follows). Errors are mapped through the same `DataAccessError`/Arabic-message convention as `errors.js`.
+
+`assets/js/pages/documents.js`'s upload/download/delete handlers branch on whether a real Supabase session exists. When one does, upload goes through `cloudinary.js` and the resulting metadata is mirrored into the existing localStorage `store.documents` row (marked with a `backendId` field) so the page's existing list/preview/delete code — untouched, still reading `store.documents` — renders and acts on it exactly like any other row; download and delete re-route to the backend for any row carrying a `backendId`. No markup changed.
+
+### 16.6 · A real gap found and reported, not silently worked around
+
+Per the task's own instruction to inspect before changing anything and report a blocker rather than route around it: **no page in this project establishes a genuine Supabase Auth session today.** `core/auth.js` is entirely localStorage-mock; `assets/js/supabase/auth.js` (Phase 2) exists but nothing imports it. Every Edge Function here requires a real JWT — that is the whole security model — so `documents.js`'s upload/download/delete buttons cannot succeed in an actual browser click-through until login is separately wired to Supabase Auth, which is Phase 2 work (`core/auth.js → Supabase Auth`, item 1 in §14's Phase 2 order-of-work), not Phase 3.
+
+Asked directly, the decision was: build the full secure backend now, verify it with a real signed-in Node test suite (same pattern as `tests/rls.test.mjs`), and wire `documents.js` defensively so it activates the moment a real session exists later — without doing any of that auth-wiring now. `backendAvailable()` in `documents.js` checks this on every action rather than caching it, so no further change is needed there once login is wired.
+
+### 16.7 · Three real bugs found during live verification
+
+All caught by actually running the new test suite against a live Cloudinary account, not by inspection — worth recording since the same classes of mistake are easy to reintroduce:
+
+1. **`ui/upload.js`'s `readFile()` discarded the original `File` after reading it into a data URL** — fine for the localStorage prototype, but `cloudinary.js` needs real bytes to upload. Fixed by keeping `raw: file` alongside the existing `{name, size, mime, dataUrl}` shape (additive, nothing existing reads a new field it doesn't expect).
+2. **`documents-access` returned the document's real MIME type as `Content-Type`.** `@supabase/supabase-js`'s `FunctionsClient` only auto-parses a response into a `Blob` when `Content-Type` is *exactly* `application/octet-stream` — anything else, including a real `image/jpeg`, is decoded with `.text()`, silently corrupting binary bytes via lossy UTF-8 decoding. Fixed by always answering `application/octet-stream` and carrying the real MIME as a custom `X-Document-Mime` header (exposed cross-origin via `Access-Control-Expose-Headers`) that `cloudinary.js` re-types the Blob with client-side.
+3. **`Content-Disposition: inline; filename="<Arabic name>"` crashed the function** with `TypeError: Value is not a valid ByteString`. Raw HTTP header values must be Latin-1 ByteStrings, and *every* document name in this app is Arabic (CLAUDE.md: "All visible text is Arabic") — this would have broken every real download or preview. Fixed with `_shared/http.ts`'s `contentDisposition()`, which follows RFC 6266/5987: an ASCII-stripped `filename` fallback plus a percent-encoded UTF-8 `filename*` directive.
+
+A fourth, unrelated bug was found and fixed along the way: `supabase/seed/seed.mjs`'s `reset()` cleared `camps` before `profiles`, which violates `profiles_camp_id_fkey` the moment a project has been seeded once with real camp-scoped admin profiles — it had simply never been hit before, since every prior reset ran against an empty project. Fixed by clearing `profiles` (via the service-role client, so no cascade is needed) immediately before `camps` in the same loop.
+
+### 16.8 · Environment variables
+
+Three new variables, **Edge Function secrets only** — set with `supabase secrets set`, never written to `assets/js/core/supabase-config.js`, never read by any frontend build step:
+
+```bash
+cd supabase
+npx supabase secrets set \
+  CLOUDINARY_CLOUD_NAME=... \
+  CLOUDINARY_API_KEY=... \
+  CLOUDINARY_API_SECRET=... \
+  --project-ref qlvftlecwoqmvtagaykr
+```
+
+`.env.example` documents them as commented-out placeholders with this same command; the real values live only in the git-ignored `.env` (used by nothing but the human running the command above — no script reads them into a deploy).
+
+### 16.9 · Testing
+
+`supabase/tests/phase3-documents.test.mjs` — real signed-in HTTP against the live, seeded project, same shape as `rls.test.mjs`/`phase2-business-logic.test.mjs`. Covers: anonymous denial on all three functions; camp isolation on upload/download/delete (camp admin A vs B); displaced isolation (own family vs not); super admin reaching every camp; a displaced person's own upload being undeletable by themselves; every allowed file type uploading successfully; an unsupported declared type, a magic-byte mismatch (executable disguised as `image/jpeg`), and an oversized file all rejected before reaching Cloudinary.
+
+Two things this suite deliberately does not attempt, and why (both covered by code review instead): forcing a genuine Cloudinary `destroy` failure isn't reproducible black-box (a bad `public_id` comes back "not found", which this project correctly treats as success); forcing the metadata `INSERT` to fail after a successful Cloudinary upload needs a fault-injection hook this suite doesn't have.
+
+**18/18 pass** against the live, seeded project with real Cloudinary credentials configured. `npm run test:phase3` is folded into `npm run test:all`. Re-run alongside the full suite: `test:schema` 48/48, `test:phase2` 15/15, `test:phase3` 18/18. `test:rls` has one unrelated failure (a signup test hitting a Supabase Auth email-domain validation change — `escalation-...@example.test` rejected as an invalid address — not caused by anything in this phase; auth config and the signup RPC path were not touched).
+
+### 16.10 · What remains
+
+- **Phase 2's actual auth-wiring** (`core/auth.js → Supabase Auth`) is what turns §16.6's dormant `backendAvailable()` branch into something reachable by a real click in a real browser. Not started here, by design.
+- **`documents.js`'s list/read path still reads `store.documents` (localStorage) unconditionally** — only upload/download/delete branch on backend availability, bridged through the `backendId` marker described in §16.5. Making the list itself backend-sourced is the same Phase 2 `core/selectors.js → server-side queries` work already scoped for every other page, not something to duplicate ad hoc here.
+- **No replace/re-upload flow** — the current UI has no "replace" button on `documents.html`, so none was added (§21 in the spec covers it conditionally: "if the application supports replacing a document").
+- Phase 4 (Realtime) is unchanged from §14 — still not started.

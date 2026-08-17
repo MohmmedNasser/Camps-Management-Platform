@@ -31,8 +31,10 @@ import { documentFields, documentSchema } from '../ui/record-forms.js';
 import { icon } from '../ui/icons.js';
 import { toast } from '../ui/toast.js';
 import { can } from '../core/auth.js';
+import { isConfigured, currentUserId } from '../core/supabase-client.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
+import * as cloudinary from '../supabase/cloudinary.js';
 import { ROLES, DOCUMENT_CATEGORIES } from '../core/config.js';
 
 const state = { q: '', category: '', campId: '' };
@@ -51,8 +53,37 @@ function filenameWithExtension(name, mime) {
   return ext ? `${name}.${ext}` : name;
 }
 
+/**
+ * True when a real Supabase session exists — i.e. the Cloudinary Edge
+ * Functions (documents-upload/-access/-delete) can actually be called.
+ * No page establishes such a session today (login is still the localStorage
+ * prototype — see BACKEND.md's Phase 3 notes), so this resolves false in
+ * every session that exists right now; it is checked on demand rather than
+ * cached so the moment that changes, these actions pick it up with no
+ * further change here.
+ */
+async function backendAvailable() {
+  return isConfigured && Boolean(await currentUserId());
+}
+
 /** Triggers a real browser download. No-ops when there is no downloadable content. */
-function downloadDocument(row) {
+async function downloadDocument(row) {
+  if (row.backendId) {
+    try {
+      const blob = await cloudinary.getDocumentBlob(row.backendId, { mode: 'attachment' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filenameWithExtension(row.name, row.mime);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast.error('تعذر التنزيل', error.message || 'حدث خطأ غير متوقع');
+    }
+    return;
+  }
   if (!row.dataUrl) return;
   const link = document.createElement('a');
   link.href = row.dataUrl;
@@ -132,9 +163,9 @@ function init({ session, content }) {
     if (row) openPreview(select.documentRow(row));
   });
 
-  delegate(content, 'click', '[data-download]', (event, node) => {
+  delegate(content, 'click', '[data-download]', async (event, node) => {
     const row = store.documents.get(node.dataset.download);
-    if (row) downloadDocument(select.documentRow(row));
+    if (row) await downloadDocument(select.documentRow(row));
   });
 
   delegate(content, 'click', '[data-delete]', async (event, node) => {
@@ -146,6 +177,15 @@ function init({ session, content }) {
       confirmLabel: 'حذف',
     });
     if (!ok) return;
+
+    if (row.backendId) {
+      try {
+        await cloudinary.deleteDocumentAsset(row.backendId);
+      } catch (error) {
+        toast.error('تعذر الحذف', error.message || 'حدث خطأ غير متوقع');
+        return;
+      }
+    }
     store.documents.remove(row.id);
     toast.success('تم الحذف', 'تم حذف المستند.');
     load(session);
@@ -224,7 +264,7 @@ function resultsView(session, rows) {
       cell: (row) =>
         rowActions([
           { iconName: 'eye', title: `معاينة ${row.name}`, attrs: `data-preview="${row.id}"` },
-          row.dataUrl
+          row.dataUrl || row.backendId
             ? { iconName: 'download', title: `تنزيل ${row.name}`, attrs: `data-download="${row.id}"` }
             : { iconName: 'download', title: 'الملف غير متاح للتنزيل', attrs: 'disabled aria-disabled="true"' },
           can('document:delete') && {
@@ -308,7 +348,7 @@ function openUploader(session) {
 
   bindForm(form, {
     schema: documentSchema({ requirePerson: true }),
-    onSubmit: (values) => {
+    onSubmit: async (values) => {
       const files = picker.files();
       if (!files.length) {
         toast.error('تعذر الرفع', 'اختر ملفاً أولاً.');
@@ -317,8 +357,7 @@ function openUploader(session) {
 
       const file = files[0];
       const person = store.displaced.get(values.displacedId);
-
-      store.documents.create({
+      const record = {
         name: values.name.trim(),
         category: values.category,
         displacedId: values.displacedId,
@@ -329,7 +368,33 @@ function openUploader(session) {
         dataUrl: file.dataUrl,
         uploadedAt: new Date().toISOString(),
         uploadedBy: session.id,
-      });
+      };
+
+      // When a real Supabase session exists, upload through the Cloudinary
+      // Edge Function and mirror the metadata locally (marked with
+      // backendId) so the existing localStorage-driven list/preview/delete
+      // code renders and acts on it exactly as it does any other row —
+      // download and delete route back through the backend for rows that
+      // carry a backendId (see downloadDocument() and the delete handler
+      // above). No page establishes a real session today, so this branch
+      // does not run yet; it is exercised entirely by
+      // supabase/tests/phase3-documents.test.mjs.
+      if (await backendAvailable()) {
+        try {
+          const uploaded = await cloudinary.uploadDocument({
+            file: file.raw,
+            name: record.name,
+            category: record.category,
+            familyMemberId: values.displacedId,
+          });
+          store.documents.create({ ...record, dataUrl: '', backendId: uploaded.id });
+        } catch (error) {
+          toast.error('تعذر الرفع', error.message || 'حدث خطأ غير متوقع');
+          return;
+        }
+      } else {
+        store.documents.create(record);
+      }
 
       modal.close('submit');
       toast.success('تم الرفع', 'تمت إضافة المستند إلى الملف.');
@@ -365,13 +430,13 @@ function openPreview(row) {
     footer: `
       ${button({ label: 'إغلاق', variant: 'secondary', attrs: 'data-close' })}
       ${
-        row.dataUrl
+        row.dataUrl || row.backendId
           ? button({ label: 'تنزيل المستند', variant: 'primary', iconName: 'download', attrs: `data-download="${row.id}"` })
           : button({ label: 'تنزيل المستند', variant: 'primary', iconName: 'download', attrs: 'disabled aria-disabled="true"' })
       }`,
   });
 
-  if (row.dataUrl) {
+  if (row.dataUrl || row.backendId) {
     delegate(modal.element, 'click', '[data-download]', () => downloadDocument(row));
   }
 }

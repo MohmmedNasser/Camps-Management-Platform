@@ -91,6 +91,16 @@ async function reset() {
   // prototype), so their dependants go first.
   // The two aid junction tables are omitted on purpose: they carry no `id`
   // column and cascade from aid_distributions.
+  //
+  // `profiles` goes right before `camps`: profiles_camp_id_fkey blocks
+  // deleting a camp while any profile still points at it. This only ever
+  // surfaces once a project has been seeded and re-seeded with real
+  // camp-scoped admin profiles — an empty/first-ever seed never hits it,
+  // which is why this was caught only once Phase 3 first ran `seed:reset`
+  // against an already-seeded project. Deleting `profiles` here (rather than
+  // waiting for the auth-user cascade below) is safe: everything else that
+  // references profiles (documents, families/family_members, aid, requests,
+  // messages) is already gone by this point in the loop.
   for (const table of [
     'documents',
     'notifications',
@@ -99,6 +109,7 @@ async function reset() {
     'registration_requests',
     'families',
     'organizations',
+    'profiles',
     'camps',
   ]) {
     const { error } = await db.from(table).delete().not('id', 'is', null);

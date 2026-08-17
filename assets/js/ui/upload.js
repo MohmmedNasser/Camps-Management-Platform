@@ -69,7 +69,9 @@ export function filePreview(file, index = 0) {
  * @returns {Promise<{name, size, mime, dataUrl}>}
  */
 export function readFile(file) {
-  const meta = { name: file.name, size: file.size, mime: file.type || 'application/octet-stream' };
+  // `raw` keeps the original File so a real upload (Phase 3's cloudinary.js)
+  // can send actual bytes; the localStorage prototype path never reads it.
+  const meta = { name: file.name, size: file.size, mime: file.type || 'application/octet-stream', raw: file };
   const isImage = file.type.startsWith('image/');
 
   if (!isImage || file.size > INLINE_LIMIT) {
