@@ -1,0 +1,24 @@
+{
+  "name": "camps-platform-backend",
+  "private": true,
+  "type": "module",
+  "description": "Backend tooling for the Displaced Camps Management Platform. The frontend prototype stays dependency-free — these packages exist only for seeding and RLS testing.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "seed": "node seed/seed.mjs",
+    "seed:reset": "node seed/seed.mjs --reset",
+    "test:schema": "node --test tests/schema.test.mjs",
+    "test:rls": "node --test tests/rls.test.mjs",
+    "test:phase2": "node --test tests/phase2-business-logic.test.mjs",
+    "test:all": "npm run test:schema && npm run test:phase2",
+    "frontend:config": "node scripts/write-frontend-config.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.58.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.11"
+  }
+}
