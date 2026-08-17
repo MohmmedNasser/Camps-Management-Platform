@@ -4,5 +4,11 @@
 -- advisory. This project already keeps its other extensions (pgcrypto,
 -- pg_stat_statements, uuid-ossp) in `extensions` — move pg_trgm there too
 -- rather than leave a new, avoidable WARN.
+--
+-- The live Supabase project already has an `extensions` schema (provisioned
+-- by the platform); a fresh database replaying this migration set from
+-- scratch (offline tests, a new project) would not, so it is created here
+-- rather than assumed.
 
+create schema if not exists extensions;
 alter extension pg_trgm set schema extensions;
