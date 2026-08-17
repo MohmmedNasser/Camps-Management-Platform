@@ -12,13 +12,15 @@
     "test:schema": "node --test tests/schema.test.mjs",
     "test:rls": "node --test tests/rls.test.mjs",
     "test:phase2": "node --test tests/phase2-business-logic.test.mjs",
-    "test:all": "npm run test:schema && npm run test:phase2",
+    "test:browser-smoke": "node --test tests/browser-smoke.test.mjs",
+    "test:all": "npm run test:schema && npm run test:phase2 && npm run test:browser-smoke",
     "frontend:config": "node scripts/write-frontend-config.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.58.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.3.11"
+    "@electric-sql/pglite": "0.3.11",
+    "playwright": "^1.62.1"
   }
 }

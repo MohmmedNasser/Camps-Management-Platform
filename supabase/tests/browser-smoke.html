@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head><meta charset="utf-8" /><title>Phase 2 smoke</title></head>
+<body>
+<script type="module">
+  import { signIn } from '../../assets/js/supabase/auth.js';
+  import { listCamps } from '../../assets/js/supabase/camps.js';
+  import { listFamilies } from '../../assets/js/supabase/families.js';
+
+  window.__runSmoke = async (email) => {
+    await signIn(email, '123456');
+    const camps = await listCamps({});
+    const families = await listFamilies({});
+    return { campsCount: camps.length, familiesRows: families.rows.length, familiesTotal: families.total };
+  };
+</script>
+</body>
+</html>
