@@ -14,7 +14,7 @@ import { icon } from './icons.js';
 import { avatar } from './components.js';
 import { confirmDialog } from './modal.js';
 import { guard, pageUrl, currentPage, go } from '../core/router.js';
-import { logout, switchRole } from '../core/auth.js';
+import { logout } from '../core/auth.js';
 import * as store from '../core/store.js';
 import {
   notificationsFor,
@@ -100,16 +100,6 @@ function notificationList(rows) {
 }
 
 function userMenu(session) {
-  const roleSwitch = Object.values(ROLES)
-    .map(
-      (role) => `
-      <button type="button" class="menu-item" role="menuitemradio" aria-checked="${role === session.role}" data-role="${role}">
-        ${icon(role === session.role ? 'check' : 'user', { size: 16 })}
-        <span>${esc(ROLE_LABELS[role])}</span>
-      </button>`
-    )
-    .join('');
-
   return `
     <div class="dropdown__section">
       <div class="u-flex u-gap-3 u-center">
@@ -126,9 +116,6 @@ function userMenu(session) {
     </div>
     <a class="menu-item" href="${pageUrl('profile.html')}">${icon('user', { size: 16 })}<span>الملف الشخصي</span></a>
     <a class="menu-item" href="${pageUrl('settings.html')}">${icon('settings', { size: 16 })}<span>الإعدادات</span></a>
-    <div class="menu-divider"></div>
-    <div class="dropdown__label">تبديل الدور (للمراجعة فقط)</div>
-    ${roleSwitch}
     <div class="menu-divider"></div>
     <button type="button" class="menu-item menu-item--danger" data-logout>
       ${icon('logout', { size: 16 })}<span>تسجيل الخروج</span>
@@ -268,14 +255,6 @@ function wireDropdowns() {
 }
 
 function wireUserMenu(session) {
-  qsa('[data-role]').forEach((node) =>
-    on(node, 'click', () => {
-      const role = node.dataset.role;
-      if (role === session.role) return;
-      if (switchRole(role)) window.location.href = pageUrl('dashboard.html');
-    })
-  );
-
   const logoutBtn = qs('[data-logout]');
   if (logoutBtn) {
     on(logoutBtn, 'click', async () => {
@@ -285,7 +264,7 @@ function wireUserMenu(session) {
         confirmLabel: 'تسجيل الخروج',
       });
       if (!ok) return;
-      logout();
+      await logout();
       window.location.href = pageUrl('login.html');
     });
   }
@@ -306,10 +285,10 @@ function wireUserMenu(session) {
 /**
  * Guard the route and render the shell.
  * @param {{active?: string, title?: string}} options
- * @returns {{session: object, content: HTMLElement}|null} null when redirected
+ * @returns {Promise<{session: object, content: HTMLElement}|null>} null when redirected
  */
-export function mountShell({ active = currentPage(), title = '' } = {}) {
-  const session = guard();
+export async function mountShell({ active = currentPage(), title = '' } = {}) {
+  const session = await guard();
   if (!session) return null;
 
   const badges = {
@@ -319,6 +298,7 @@ export function mountShell({ active = currentPage(), title = '' } = {}) {
   const notifications = notificationsFor(session.id);
   const unread = unreadNotificationCount(session.id);
 
+  document.body.classList.remove('app-loading');
   document.body.innerHTML = shellMarkup(session, active, badges, notifications, unread);
 
   wireDrawer();
