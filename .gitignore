@@ -19,3 +19,5 @@ supabase/.temp/
 Thumbs.db
 .vscode/
 .idea/
+
+.worktrees/
