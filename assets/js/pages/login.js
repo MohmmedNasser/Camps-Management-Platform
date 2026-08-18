@@ -16,7 +16,7 @@ import { guestOnly, homeFor } from '../core/router.js';
 import { demoAccounts } from '../data/mock-data.js';
 import { ROLE_LABELS } from '../core/config.js';
 
-if (!guestOnly()) {
+if (!(await guestOnly())) {
   ready(render);
 }
 
@@ -93,8 +93,8 @@ function render() {
     errorSlot.classList.remove('u-hidden');
   };
 
-  const signIn = (email, password) => {
-    const result = login(email, password);
+  const signIn = async (email, password) => {
+    const result = await login(email, password);
     if (!result.ok) {
       showError(result.error);
       setFieldError(form, 'email', ' ');
