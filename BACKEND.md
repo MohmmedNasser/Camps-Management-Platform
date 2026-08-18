@@ -721,3 +721,32 @@ profiles,camps,registration-requests}.js` and `core/supabase-client.js`.
 
 Verified with `supabase/tests/phase4-auth-frontend.test.mjs` (Playwright,
 real browser, live seeded project) plus a manual pass per `CLAUDE.md`.
+
+---
+
+## 18 · Phase 4.2 — Super Admin dashboard on real data
+
+`assets/js/pages/dashboard.js`'s Super Admin view now reads real data via
+the new `assets/js/supabase/dashboard.js`, which composes the existing
+`get_dashboard_statistics(p_camp_id)` RPC, `family_stats` view,
+`listCamps()` and `listProfiles()` with four genuinely-missing queries:
+gender split, distinct donor-organization count (organizations that
+actually appear in `aid_distributions`, not every registered
+organization), monthly registration buckets
+(`family_members.created_at`), and family-size buckets
+(`family_stats.members_count`).
+
+- No backend change of any kind — no table, column, view, RPC, trigger,
+  RLS policy or migration was added or modified.
+- Camp Admin and Displaced-person dashboards are unchanged and still read
+  mock `core/store.js` — this phase is the Super Admin dashboard only.
+- `assets/js/pages/dashboard.js`'s `collect()` gained one `async` branch
+  for `ROLES.SUPER_ADMIN`; every rendering function
+  (`superAdminView`, `campAdminView`, `displacedView`, `drawCharts`, every
+  `*Row()` helper) is unchanged.
+- Verified with `supabase/tests/phase4.2-dashboard-verification.test.mjs`
+  (Playwright, real browser, live seeded project): every rendered stat
+  card, the donor count, the gender legend, and every camp's row are each
+  compared against an independent query against the same live database.
+- No `service_role` key or other private credential reaches the browser
+  (same assertion style as Phase 4.1's test #10).
