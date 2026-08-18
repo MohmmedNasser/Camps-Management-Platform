@@ -14,21 +14,17 @@ import { button, alert } from '../ui/components.js';
 import { toast } from '../ui/toast.js';
 import { register } from '../core/auth.js';
 import { guestOnly } from '../core/router.js';
-import * as store from '../core/store.js';
-import { nationalIdTaken, campOfNationalId } from '../core/selectors.js';
+import { listCamps } from '../supabase/camps.js';
 import { STATUS } from '../core/config.js';
 
-if (!guestOnly()) {
-  ready(render);
+if (!(await guestOnly())) {
+  ready(() => { render(); });
 }
 
-function campOptions() {
-  return store.camps
-    .list((camp) => camp.status === STATUS.ACTIVE)
-    .map((camp) => ({ value: camp.id, label: `${camp.name} — ${camp.city}` }));
-}
+async function render() {
+  const camps = await listCamps({ status: STATUS.ACTIVE });
+  const campOptions = camps.map((camp) => ({ value: camp.id, label: `${camp.name} — ${camp.city}` }));
 
-function render() {
   document.body.classList.remove('app-loading');
   document.body.innerHTML = authLayout({
     title: 'إنشاء حساب جديد',
@@ -89,7 +85,7 @@ function render() {
               ${selectField({
                 name: 'campId',
                 label: 'المخيم',
-                options: campOptions(),
+                options: campOptions,
                 required: true,
                 placeholder: 'اختر المخيم',
                 full: true,
@@ -119,14 +115,7 @@ function render() {
   bindForm(form, {
     schema: {
       fullName: [rules.required('الاسم الكامل'), rules.minLength(6, 'الاسم الكامل')],
-      nationalId: [
-        rules.required('رقم الهوية'),
-        rules.nationalId(),
-        rules.custom(
-          (value) => !nationalIdTaken(value),
-          'رقم الهوية مسجّل مسبقاً. لا يمكن التسجيل في أكثر من مخيم باستخدام نفس رقم الهوية.'
-        ),
-      ],
+      nationalId: [rules.required('رقم الهوية'), rules.nationalId()],
       phone: [rules.required('رقم الجوال'), rules.phone('رقم الجوال')],
       email: [rules.required('البريد الإلكتروني'), rules.email()],
       campId: [rules.required('المخيم')],
@@ -137,17 +126,14 @@ function render() {
       ],
       terms: [rules.checked('يجب الإقرار بصحة البيانات للمتابعة.')],
     },
-    onSubmit: (values) => {
-      const result = register(values);
+    onSubmit: async (values) => {
+      const result = await register(values);
 
       if (!result.ok) {
-        const camp = campOfNationalId(values.nationalId);
         errorSlot.innerHTML = alert({
           variant: 'error',
           title: 'تعذر إنشاء الحساب',
-          text: camp && result.field === 'nationalId'
-            ? `رقم الهوية مسجّل مسبقاً في ${camp}. لا يمكن التسجيل في أكثر من مخيم باستخدام نفس رقم الهوية.`
-            : result.error,
+          text: result.error,
         });
         errorSlot.classList.remove('u-hidden');
         setFieldError(form, result.field, result.error);
