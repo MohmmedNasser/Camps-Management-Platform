@@ -6,7 +6,7 @@
  * The Next.js port replaces this with middleware; the rules stay identical.
  */
 
-import { getSession } from './auth.js';
+import { getSession, ProfileError } from './auth.js';
 import { ROLES, STATUS, PAGE_ACCESS } from './config.js';
 
 /** Last path segment, e.g. "displaced-details.html" or "displaced". */
@@ -82,11 +82,22 @@ export function homeFor(session) {
 }
 
 /**
- * Guard the current page.
- * @returns {object|null} the session when access is granted; null after a redirect.
+ * Guard the current page. UX/navigation only — RLS on the database is the
+ * real authorization boundary and is unaffected by anything here.
+ * @returns {Promise<object|null>} the session when access is granted; null after a redirect.
  */
-export function guard({ page = currentPage() } = {}) {
-  const session = getSession();
+export async function guard({ page = currentPage() } = {}) {
+  let session;
+  try {
+    session = await getSession();
+  } catch (error) {
+    if (error instanceof ProfileError) {
+      console.error('[auth] profile error:', error.reason);
+      replace('auth-error.html');
+      return null;
+    }
+    throw error;
+  }
 
   if (!session) {
     replace('login.html');
@@ -113,8 +124,18 @@ export function guard({ page = currentPage() } = {}) {
 }
 
 /** Guard for auth screens: a signed-in user should not see the login form. */
-export function guestOnly() {
-  const session = getSession();
+export async function guestOnly() {
+  let session;
+  try {
+    session = await getSession();
+  } catch (error) {
+    if (error instanceof ProfileError) {
+      console.error('[auth] profile error:', error.reason);
+      replace('auth-error.html');
+      return true; // redirected — caller must not render the guest screen
+    }
+    throw error;
+  }
   if (session) {
     replace(homeFor(session));
     return true;
