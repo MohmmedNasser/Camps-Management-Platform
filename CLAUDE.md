@@ -151,3 +151,4 @@ Notes for the next change:
 - Records still referenced elsewhere are protected rather than cascaded: `campInUse()` and `organizationInUse()` block deletion and the UI explains why.
 - Removing a displaced person no longer removes aid: aid belongs to the family and only goes when the family does (`removeFamily`).
 - `SEED_VERSION` in `data/mock-data.js` must be bumped whenever a record shape changes. `store.ensureSeeded()` only reseeds when it differs, so a stale browser otherwise keeps the old shape and pages render against fields that no longer exist.
+- **Phase 4.1 (auth):** `core/auth.js`/`core/router.js`/`ui/layout.js` now use real Supabase Auth for session, login, logout and role detection — role/camp/family scope come only from the authenticated user's `profiles` row. Dashboards, families, displaced persons, aid, documents, messages, notifications and statistics still read mock `core/store.js`; that migration is later Phase 4 work.

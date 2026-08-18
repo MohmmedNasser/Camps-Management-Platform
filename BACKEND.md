@@ -694,3 +694,30 @@ Two things this suite deliberately does not attempt, and why (both covered by co
 - **`documents.js`'s list/read path still reads `store.documents` (localStorage) unconditionally** — only upload/download/delete branch on backend availability, bridged through the `backendId` marker described in §16.5. Making the list itself backend-sourced is the same Phase 2 `core/selectors.js → server-side queries` work already scoped for every other page, not something to duplicate ad hoc here.
 - **No replace/re-upload flow** — the current UI has no "replace" button on `documents.html`, so none was added (§21 in the spec covers it conditionally: "if the application supports replacing a document").
 - Phase 4 (Realtime) is unchanged from §14 — still not started.
+
+---
+
+## 17 · Phase 4.1 — frontend auth wiring
+
+`core/auth.js` now uses real Supabase Auth (§14's Phase 2 item 1, done): it
+is a thin `async` layer over the already-built `assets/js/supabase/{auth,
+profiles,camps,registration-requests}.js` and `core/supabase-client.js`.
+`core/router.js`'s `guard()`/`guestOnly()` and `ui/layout.js`'s
+`mountShell()` are `async` accordingly; every page module awaits them.
+
+- Role, camp and family scope come only from `profiles`, fetched fresh on
+  every `getSession()` call — never from localStorage, a URL parameter, or
+  any other client state.
+- An authenticated user with no `profiles` row or an unrecognized role
+  throws `ProfileError` and lands on the new `auth-error.html` — never a
+  guessed role.
+- The client-side "تبديل الدور" role switcher is removed entirely.
+- Dashboards, families, displaced persons, aid, documents, messages,
+  notifications and statistics are unchanged and still read mock
+  `core/store.js` — this phase is authentication/session/roles only.
+- `documents.js`'s `backendAvailable()` branch (§16.6) is now reachable by
+  a real signed-in browser session, with no change to `documents.js` itself.
+- No backend schema, RLS, RPC or Edge Function change was required or made.
+
+Verified with `supabase/tests/phase4-auth-frontend.test.mjs` (Playwright,
+real browser, live seeded project) plus a manual pass per `CLAUDE.md`.
