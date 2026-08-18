@@ -7,14 +7,23 @@ import { qs, on, ready } from '../utils/dom.js';
 import { formatDate } from '../utils/format.js';
 import { statusLayout } from '../ui/auth-layout.js';
 import { button, statusBadge, alert, definitionList, definition } from '../ui/components.js';
-import { getSession, logout } from '../core/auth.js';
+import { getSession, logout, ProfileError } from '../core/auth.js';
 import { homeFor } from '../core/router.js';
 import { campName } from '../core/selectors.js';
 import * as store from '../core/store.js';
 import { STATUS } from '../core/config.js';
 
-ready(() => {
-  const session = getSession();
+ready(async () => {
+  let session;
+  try {
+    session = await getSession();
+  } catch (error) {
+    if (error instanceof ProfileError) {
+      window.location.replace('auth-error.html');
+      return;
+    }
+    throw error;
+  }
 
   if (!session) {
     window.location.replace('login.html');

@@ -10,8 +10,10 @@ import { button } from '../ui/components.js';
 import { getSession } from '../core/auth.js';
 import { homeFor } from '../core/router.js';
 
-ready(() => {
-  const session = getSession();
+ready(async () => {
+  // A broken profile is treated the same as signed-out here: this page's
+  // only job is offering a way back, and "login" is a safe link either way.
+  const session = await getSession().catch(() => null);
   const home = homeFor(session);
 
   document.body.classList.remove('app-loading');
