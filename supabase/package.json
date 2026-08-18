@@ -17,7 +17,9 @@
     "test:unit-errors": "node --test tests/unit-errors.test.mjs",
     "test:phase4-auth-frontend": "node --test tests/phase4-auth-frontend.test.mjs",
     "test:phase4.2-dashboard": "node --test tests/phase4.2-dashboard-verification.test.mjs",
-    "test:all": "npm run test:schema && npm run test:phase2 && npm run test:phase3 && npm run test:browser-smoke && npm run test:unit-errors && npm run test:phase4-auth-frontend && npm run test:phase4.2-dashboard",
+    "test:phase4.3-camp-isolation": "node --test tests/phase4.3-camp-isolation.test.mjs",
+    "test:phase4.3-dashboard": "node --test tests/phase4.3-dashboard-verification.test.mjs",
+    "test:all": "npm run test:schema && npm run test:phase2 && npm run test:phase3 && npm run test:browser-smoke && npm run test:unit-errors && npm run test:phase4-auth-frontend && npm run test:phase4.2-dashboard && npm run test:phase4.3-camp-isolation && npm run test:phase4.3-dashboard",
     "frontend:config": "node scripts/write-frontend-config.mjs"
   },
   "dependencies": {
