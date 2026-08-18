@@ -34,7 +34,7 @@ import { exportSheet, timestampedName } from '../utils/xlsx.js';
 
 const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
 
-const shell = mountShell({ active: 'aid.html', title: 'المساعدات' });
+const shell = await mountShell({ active: 'aid.html', title: 'المساعدات' });
 if (shell) init(shell);
 
 function readQuery() {

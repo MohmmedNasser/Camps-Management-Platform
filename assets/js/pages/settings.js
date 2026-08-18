@@ -27,7 +27,7 @@ import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, ROLE_LABELS, APP_NAME } from '../core/config.js';
 
-const shell = mountShell({ active: 'settings.html', title: 'الإعدادات' });
+const shell = await mountShell({ active: 'settings.html', title: 'الإعدادات' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

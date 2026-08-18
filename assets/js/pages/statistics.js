@@ -35,7 +35,7 @@ import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { CHART_COLORS } from '../core/config.js';
 
-const shell = mountShell({ active: 'statistics.html', title: 'الإحصائيات' });
+const shell = await mountShell({ active: 'statistics.html', title: 'الإحصائيات' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

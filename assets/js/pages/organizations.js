@@ -32,7 +32,7 @@ import * as select from '../core/selectors.js';
 
 const state = { q: '' };
 
-const shell = mountShell({ active: 'organizations.html', title: 'المؤسسات' });
+const shell = await mountShell({ active: 'organizations.html', title: 'المؤسسات' });
 if (shell) init(shell);
 
 function init({ session, content }) {

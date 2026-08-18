@@ -35,7 +35,7 @@ import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, STATUS, CHART_COLORS } from '../core/config.js';
 
-const shell = mountShell({ active: 'dashboard.html', title: 'الرئيسية' });
+const shell = await mountShell({ active: 'dashboard.html', title: 'الرئيسية' });
 if (shell) init(shell);
 
 /* ---- Entry -------------------------------------------------------------- */

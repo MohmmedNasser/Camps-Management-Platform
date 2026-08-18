@@ -27,7 +27,7 @@ import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, AID_TYPES } from '../core/config.js';
 
-const shell = mountShell({ active: 'aid.html', title: 'تفاصيل المساعدة' });
+const shell = await mountShell({ active: 'aid.html', title: 'تفاصيل المساعدة' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

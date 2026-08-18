@@ -83,7 +83,7 @@ FILTER_KEYS.forEach((key) => {
     state[key] = "";
 });
 
-const shell = mountShell({ active: "displaced.html", title: "النازحون" });
+const shell = await mountShell({ active: "displaced.html", title: "النازحون" });
 if (shell) init(shell);
 
 function readQuery() {

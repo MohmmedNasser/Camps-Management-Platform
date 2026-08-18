@@ -17,7 +17,7 @@ import { pageUrl, go } from '../core/router.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 
-const shell = mountShell({ active: 'aid.html', title: 'إضافة مساعدة' });
+const shell = await mountShell({ active: 'aid.html', title: 'إضافة مساعدة' });
 if (shell) init(shell);
 
 function init({ session, content }) {

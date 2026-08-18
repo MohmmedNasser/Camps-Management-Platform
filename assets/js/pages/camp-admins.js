@@ -33,7 +33,7 @@ import { ROLES, STATUS, STATUS_LABELS } from '../core/config.js';
 
 const state = { q: '', campId: '', status: '' };
 
-const shell = mountShell({ active: 'camp-admins.html', title: 'مسؤولو المخيمات' });
+const shell = await mountShell({ active: 'camp-admins.html', title: 'مسؤولو المخيمات' });
 if (shell) init(shell);
 
 /** Rebuilt fresh on every call so the sheet never shows stale values. */

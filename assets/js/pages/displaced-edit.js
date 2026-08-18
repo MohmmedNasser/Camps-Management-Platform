@@ -29,7 +29,7 @@ import { inScope, can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 
-const shell = mountShell({ active: 'displaced.html', title: 'تعديل بيانات نازح' });
+const shell = await mountShell({ active: 'displaced.html', title: 'تعديل بيانات نازح' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

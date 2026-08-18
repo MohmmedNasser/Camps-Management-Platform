@@ -16,7 +16,7 @@ import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { STATUS } from '../core/config.js';
 
-const shell = mountShell({ active: 'displaced.html', title: 'إضافة نازح' });
+const shell = await mountShell({ active: 'displaced.html', title: 'إضافة نازح' });
 if (shell) init(shell);
 
 function init({ session, content }) {

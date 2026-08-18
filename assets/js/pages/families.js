@@ -61,7 +61,7 @@ FILTER_KEYS.forEach((key) => {
   state[key] = '';
 });
 
-const shell = mountShell({ active: 'families.html', title: 'الأسر' });
+const shell = await mountShell({ active: 'families.html', title: 'الأسر' });
 if (shell) init(shell);
 
 function readQuery() {

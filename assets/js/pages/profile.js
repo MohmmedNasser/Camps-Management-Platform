@@ -47,7 +47,7 @@ import {
   GOVERNORATES,
 } from '../core/config.js';
 
-const shell = mountShell({ active: 'profile.html', title: 'الملف الشخصي' });
+const shell = await mountShell({ active: 'profile.html', title: 'الملف الشخصي' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

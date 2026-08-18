@@ -32,7 +32,7 @@ const STATUS_LABELS = { unread: 'غير مقروءة', read: 'مقروءة', rep
 
 const state = { q: '', status: '', subject: '' };
 
-const shell = mountShell({ active: 'messages.html', title: 'الرسائل' });
+const shell = await mountShell({ active: 'messages.html', title: 'الرسائل' });
 if (shell) init(shell);
 
 /** Rebuilt fresh on every call so the sheet never shows stale values. */

@@ -17,7 +17,7 @@ import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import { ROLES } from '../core/config.js';
 
-const shell = mountShell({ active: 'messages.html', title: 'رسالة جديدة' });
+const shell = await mountShell({ active: 'messages.html', title: 'رسالة جديدة' });
 if (shell) init(shell);
 
 function init({ session, content }) {

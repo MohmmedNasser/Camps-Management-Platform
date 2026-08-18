@@ -51,7 +51,7 @@ import {
   RELATIONSHIPS,
 } from '../core/config.js';
 
-const shell = mountShell({ active: 'displaced.html', title: 'بيانات النازح' });
+const shell = await mountShell({ active: 'displaced.html', title: 'بيانات النازح' });
 if (shell) init(shell);
 
 /* ---- Entry --------------------------------------------------------------- */

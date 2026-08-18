@@ -26,7 +26,7 @@ import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import * as select from '../core/selectors.js';
 
-const shell = mountShell({ active: 'families.html', title: 'إضافة أسرة' });
+const shell = await mountShell({ active: 'families.html', title: 'إضافة أسرة' });
 if (shell) init(shell);
 
 function init({ session, content }) {

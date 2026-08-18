@@ -34,9 +34,16 @@ import { ROLES, labelOf, GENDERS, RELATIONSHIPS, TENT_TYPES } from '../core/conf
 
 // A displaced person reaches this page through "أسرتي"; an administrator
 // through the families list — highlight whichever nav entry they came from.
-const activeNav = (getSession() || {}).role === ROLES.DISPLACED ? 'family-details.html' : 'families.html';
+let activeNav = 'families.html';
+try {
+  const preSession = await getSession();
+  if (preSession && preSession.role === ROLES.DISPLACED) activeNav = 'family-details.html';
+} catch {
+  // Best-effort only — mountShell()'s guard() below is the authoritative
+  // check and will redirect appropriately if the session is invalid.
+}
 
-const shell = mountShell({ active: activeNav, title: 'تفاصيل الأسرة' });
+const shell = await mountShell({ active: activeNav, title: 'تفاصيل الأسرة' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

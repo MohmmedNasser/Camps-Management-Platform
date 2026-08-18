@@ -28,7 +28,7 @@ import { STATUS, STATUS_LABELS, PAGE_SIZE } from '../core/config.js';
 
 const state = { q: '', status: STATUS.PENDING, page: 1 };
 
-const shell = mountShell({ active: 'registration-requests.html', title: 'طلبات التسجيل' });
+const shell = await mountShell({ active: 'registration-requests.html', title: 'طلبات التسجيل' });
 if (shell) init(shell);
 
 function init({ session, content }) {

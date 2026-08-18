@@ -30,7 +30,7 @@ import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { STATUS } from '../core/config.js';
 
-const shell = mountShell({ active: 'registration-requests.html', title: 'تفاصيل طلب التسجيل' });
+const shell = await mountShell({ active: 'registration-requests.html', title: 'تفاصيل طلب التسجيل' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

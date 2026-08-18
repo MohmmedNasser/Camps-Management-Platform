@@ -34,7 +34,7 @@ import { STATUS, labelOf, GOVERNORATES } from '../core/config.js';
 
 const state = { q: '' };
 
-const shell = mountShell({ active: 'camps.html', title: 'المخيمات' });
+const shell = await mountShell({ active: 'camps.html', title: 'المخيمات' });
 if (shell) init(shell);
 
 function init({ session, content }) {

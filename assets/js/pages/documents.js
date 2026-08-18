@@ -93,7 +93,7 @@ async function downloadDocument(row) {
   link.remove();
 }
 
-const shell = mountShell({ active: 'documents.html', title: 'الملفات والمستندات' });
+const shell = await mountShell({ active: 'documents.html', title: 'الملفات والمستندات' });
 if (shell) init(shell);
 
 /** Rebuilt fresh on every call so the sheet never shows stale values. */

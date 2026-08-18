@@ -34,7 +34,7 @@ import { rules } from '../utils/validators.js';
 const STATUS_VARIANTS = { unread: 'warning', read: 'neutral', replied: 'success' };
 const STATUS_LABELS = { unread: 'غير مقروءة', read: 'مقروءة', replied: 'تم الرد' };
 
-const shell = mountShell({ active: 'messages.html', title: 'تفاصيل الرسالة' });
+const shell = await mountShell({ active: 'messages.html', title: 'تفاصيل الرسالة' });
 if (shell) init(shell);
 
 async function init({ session, content }) {

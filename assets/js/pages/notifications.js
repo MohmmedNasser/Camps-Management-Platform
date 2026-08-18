@@ -27,7 +27,7 @@ const ICONS = { success: 'checkCircle', warning: 'alertTriangle', error: 'alertC
 
 const state = { filter: '' };
 
-const shell = mountShell({ active: 'notifications.html', title: 'الإشعارات' });
+const shell = await mountShell({ active: 'notifications.html', title: 'الإشعارات' });
 if (shell) init(shell);
 
 function init({ session, content }) {

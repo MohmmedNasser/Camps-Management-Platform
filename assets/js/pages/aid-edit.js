@@ -23,7 +23,7 @@ import { can, inScope } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 
-const shell = mountShell({ active: 'aid.html', title: 'تعديل مساعدة' });
+const shell = await mountShell({ active: 'aid.html', title: 'تعديل مساعدة' });
 if (shell) init(shell);
 
 async function init({ session, content }) {
