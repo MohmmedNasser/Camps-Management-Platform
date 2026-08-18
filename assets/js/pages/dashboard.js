@@ -33,8 +33,8 @@ import {
 import { pageUrl } from '../core/router.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
-import { ROLES, STATUS, CHART_COLORS } from '../core/config.js';
-import { getSuperAdminDashboard } from '../supabase/dashboard.js';
+import { ROLES, CHART_COLORS } from '../core/config.js';
+import { getSuperAdminDashboard, getCampAdminDashboard } from '../supabase/dashboard.js';
 
 const shell = await mountShell({ active: 'dashboard.html', title: 'الرئيسية' });
 if (shell) init(shell);
@@ -71,8 +71,7 @@ async function collect(session) {
     };
   }
 
-  // Phase 4.2: Super Admin reads real data. Camp Admin stays on mock data
-  // until a later phase.
+  // Phase 4.2: Super Admin reads real data.
   if (session.role === ROLES.SUPER_ADMIN) {
     const real = await getSuperAdminDashboard();
     return {
@@ -81,17 +80,10 @@ async function collect(session) {
     };
   }
 
+  // Phase 4.3: Camp Admin reads real data, scoped to their own camp.
+  const realCampAdmin = await getCampAdminDashboard(session.campId);
   return {
-    stats: select.statistics(session),
-    byMonth: select.displacedByMonth(session),
-    aidByType: select.aidByType(session),
-    familySizes: select.familySizeDistribution(session),
-    camps: select.campBreakdown(),
-    requests: store.registrationRequests
-      .list((row) => row.campId === session.campId)
-      .filter((row) => row.status === STATUS.PENDING)
-      .slice(0, 4),
-    recentAid: select.searchAid({ scope: select.scopeFilter(session) }).slice(0, 5),
+    ...realCampAdmin,
     notifications: select.notificationsFor(session.id).slice(0, 4),
   };
 }

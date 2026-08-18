@@ -12,6 +12,8 @@ import { run } from './errors.js';
 import { getDashboardStatistics } from './statistics.js';
 import { listCamps } from './camps.js';
 import { listProfiles } from './profiles.js';
+import { listAidTypes, listAidDistributions } from './aids.js';
+import { listRegistrationRequests } from './registration-requests.js';
 
 function familySizeBuckets() {
   return [
@@ -98,6 +100,28 @@ export async function getFamilySizeDistribution(campId = null) {
 }
 
 /**
+ * Count of aid_distribution_types rows per real aid_types row, scoped to
+ * one camp via the parent aid_distributions.camp_id. The one metric
+ * Phase 4.2 left mock for the Camp Admin's aidTypeBar chart (Phase 4.3
+ * spec §4/§6). Categories and labels come from listAidTypes(), never
+ * core/config.js — never a fabricated category.
+ */
+export async function getAidTypeBreakdown(campId = null) {
+  const client = requireClient();
+  const types = await listAidTypes({ activeOnly: true });
+  let query = client.from('aid_distribution_types').select('aid_type_id, aid_distributions!inner(camp_id)');
+  if (campId) query = query.eq('aid_distributions.camp_id', campId);
+  const rows = await run(query);
+
+  const counts = new Map();
+  rows.forEach((row) => counts.set(row.aid_type_id, (counts.get(row.aid_type_id) || 0) + 1));
+
+  return types
+    .map((type) => ({ value: type.code, label: type.label_ar, count: counts.get(type.id) || 0 }))
+    .filter((entry) => entry.count > 0);
+}
+
+/**
  * Per-camp breakdown for the "المخيمات" list and campComparisonBar() —
  * one get_dashboard_statistics(camp.id) call and one admins-count call
  * per camp, all camps run concurrently.
@@ -166,5 +190,72 @@ export async function getSuperAdminDashboard() {
     byMonth,
     familySizes,
     camps: campRows,
+  };
+}
+
+/** registration_requests row (snake_case) -> the shape requestRow() reads. */
+function mapRequestRow(row) {
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    nationalId: row.national_id,
+    createdAt: row.created_at,
+    status: row.status,
+  };
+}
+
+/** listAidDistributions() row -> the shape aidRow() reads. Same '، '
+ *  separator core/selectors.js's mock mapping already uses for typeLabels. */
+function mapAidRow(row) {
+  const labels = (row.aid_distribution_types || []).map((t) => t.aid_type?.label_ar).filter(Boolean);
+  return {
+    id: row.id,
+    typeLabels: labels.join('، '),
+    organizationName: row.organization?.name || '—',
+    beneficiaryCount: (row.aid_distribution_families || []).length,
+    date: row.distributed_on,
+  };
+}
+
+/**
+ * The full Camp Admin dashboard composition: { stats, byMonth, aidByType,
+ * familySizes, requests, recentAid } — the exact shape collect() already
+ * builds for this role from mock selectors (Phase 4.3 spec §5/§7), now
+ * from real data. `campId` must be the authenticated Camp Admin's own
+ * session.campId — get_dashboard_statistics rejects any other value for a
+ * camp_admin caller (verified live, spec §1).
+ */
+export async function getCampAdminDashboard(campId) {
+  const [globalStats, gender, donors, byMonth, familySizes, aidByType, requestsResult, aidResult] =
+    await Promise.all([
+      getDashboardStatistics(campId),
+      getGenderBreakdown(campId),
+      getDonorOrganizationsCount(campId),
+      getMonthlyRegistrations(campId, 8),
+      getFamilySizeDistribution(campId),
+      getAidTypeBreakdown(campId),
+      listRegistrationRequests({ status: 'pending', campId, pageSize: 4 }),
+      listAidDistributions({ campId }, { pageSize: 5, sortBy: 'distributed_on', sortDir: 'desc' }),
+    ]);
+
+  return {
+    stats: {
+      displaced: Number(globalStats?.total_members) || 0,
+      families: Number(globalStats?.total_families) || 0,
+      children: Number(globalStats?.children_under_18) || 0,
+      orphans: Number(globalStats?.orphans) || 0,
+      aid: Number(globalStats?.aid_distributions) || 0,
+      donors,
+      disability: Number(globalStats?.disability) || 0,
+      chronic: Number(globalStats?.chronic) || 0,
+      males: gender.males,
+      females: gender.females,
+      requests: Number(globalStats?.pending_requests) || 0,
+    },
+    byMonth,
+    aidByType,
+    familySizes,
+    requests: requestsResult.rows.map(mapRequestRow),
+    recentAid: aidResult.rows.map(mapAidRow),
   };
 }
