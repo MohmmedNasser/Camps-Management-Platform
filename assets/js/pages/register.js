@@ -12,7 +12,7 @@ import { authLayout } from '../ui/auth-layout.js';
 import { inputField, selectField, passwordField, checkboxField, bindForm, setFieldError } from '../ui/form.js';
 import { button, alert } from '../ui/components.js';
 import { toast } from '../ui/toast.js';
-import { register } from '../core/auth.js';
+import { register, ProfileError } from '../core/auth.js';
 import { guestOnly } from '../core/router.js';
 import { listCamps } from '../supabase/camps.js';
 import { STATUS } from '../core/config.js';
@@ -127,7 +127,18 @@ async function render() {
       terms: [rules.checked('يجب الإقرار بصحة البيانات للمتابعة.')],
     },
     onSubmit: async (values) => {
-      const result = await register(values);
+      let result;
+      try {
+        result = await register(values);
+      } catch (error) {
+        // A real, authenticated user with no usable profile — fail closed
+        // rather than leaving the form silently stuck.
+        if (error instanceof ProfileError) {
+          window.location.href = 'auth-error.html';
+          return;
+        }
+        throw error;
+      }
 
       if (!result.ok) {
         errorSlot.innerHTML = alert({

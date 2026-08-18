@@ -86,9 +86,13 @@ export function mapAuthError(error) {
     return new DataAccessError(ErrorType.UNAUTHORIZED, 'البريد الإلكتروني أو كلمة المرور غير صحيحة.', error);
   }
 
+  // Only 401 unambiguously means "not authenticated" — an unrecognized 400
+  // is context-dependent (sign-in vs sign-up) and "يجب تسجيل الدخول..."
+  // would be nonsensical on a sign-up failure, so it falls to the generic
+  // validation message instead.
   const status = error.status;
   let type;
-  if (status === 400 || status === 401) type = ErrorType.UNAUTHORIZED;
+  if (status === 401) type = ErrorType.UNAUTHORIZED;
   else if (!status || status >= 500) type = ErrorType.DATABASE;
   else type = ErrorType.VALIDATION;
   return new DataAccessError(type, FRIENDLY_AR[type], error);

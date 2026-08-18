@@ -11,7 +11,7 @@ import { inputField, passwordField, checkboxField, bindForm, setFieldError } fro
 import { button, alert } from '../ui/components.js';
 import { icon } from '../ui/icons.js';
 import { toast } from '../ui/toast.js';
-import { login } from '../core/auth.js';
+import { login, ProfileError } from '../core/auth.js';
 import { guestOnly, homeFor } from '../core/router.js';
 import { demoAccounts } from '../data/mock-data.js';
 import { ROLE_LABELS } from '../core/config.js';
@@ -94,7 +94,18 @@ function render() {
   };
 
   const signIn = async (email, password) => {
-    const result = await login(email, password);
+    let result;
+    try {
+      result = await login(email, password);
+    } catch (error) {
+      // A real, authenticated user with no usable profile — fail closed
+      // rather than leaving the form silently stuck.
+      if (error instanceof ProfileError) {
+        window.location.href = 'auth-error.html';
+        return;
+      }
+      throw error;
+    }
     if (!result.ok) {
       showError(result.error);
       setFieldError(form, 'email', ' ');

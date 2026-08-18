@@ -29,3 +29,8 @@ test('mapAuthError: unrecognized error -> generic fallback, never raw text', () 
 test('mapAuthError: null error -> null', () => {
   assert.equal(mapAuthError(null), null);
 });
+
+test('mapAuthError: unrecognized 400 (e.g. sign-up rejected for an unrelated reason) -> generic validation message, never "must sign in"', () => {
+  const err = mapAuthError({ status: 400, code: 'email_address_invalid', message: 'Email address is invalid' });
+  assert.equal(err.message, 'البيانات المدخلة غير صالحة');
+});

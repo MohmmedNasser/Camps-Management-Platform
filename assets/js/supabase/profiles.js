@@ -5,11 +5,12 @@ import { paginate, sort } from './query.js';
 
 const SORT_COLUMNS = ['created_at', 'full_name', 'status'];
 
+/** Null when signed out OR when the row is missing — never throws for "no profile". */
 export async function getOwnProfile() {
   const client = requireClient();
   const userId = await currentUserId();
   if (!userId) return null;
-  return run(client.from('profiles').select('*').eq('id', userId).single());
+  return run(client.from('profiles').select('*').eq('id', userId).maybeSingle());
 }
 
 /** Only `full_name`/`phone` — role, camp and status are server-authorized only (spec §4). */
