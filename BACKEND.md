@@ -750,3 +750,48 @@ organization), monthly registration buckets
   compared against an independent query against the same live database.
 - No `service_role` key or other private credential reaches the browser
   (same assertion style as Phase 4.1's test #10).
+
+---
+
+## 19 · Phase 4.3 — Camp Admin dashboard on real data
+
+`assets/js/pages/dashboard.js`'s Camp Admin view now reads real data via
+`assets/js/supabase/dashboard.js`'s new `getCampAdminDashboard(campId)`,
+which reuses every Phase 4.2 function (`getGenderBreakdown`,
+`getDonorOrganizationsCount`, `getMonthlyRegistrations`,
+`getFamilySizeDistribution`, all already `campId`-parameterized),
+`listRegistrationRequests()` and `listAidDistributions()` (Phase 2, unused
+by any page until now), and one genuinely new function,
+`getAidTypeBreakdown(campId)`, for the aid-type chart Phase 4.2 explicitly
+left mock.
+
+- `session.campId` (the authenticated profile's own camp, from
+  `core/auth.js`) is the only camp scope passed in. The real authorization
+  boundary is `get_dashboard_statistics(p_camp_id)`'s own internal check —
+  confirmed live: it raises `42501` if a camp_admin caller's `p_camp_id`
+  argument is not exactly their own `current_camp_id()`, including when
+  `null` is passed — plus RLS on every table read (`family_members`,
+  `families`, `aid_distributions` and its junction tables, and
+  `registration_requests`, all scoped via
+  `private.is_camp_admin() AND camp_id = private.current_camp_id()` or,
+  for the aid junction tables, `private.distribution_camp_id(...)`).
+- No backend change of any kind — no table, column, view, RPC, trigger,
+  RLS policy or migration was added or modified.
+- Super Admin and Displaced-person dashboards are unchanged and still read
+  their existing sources — this phase is the Camp Admin dashboard only.
+- `assets/js/pages/dashboard.js`'s `collect()` gained one more `async`
+  branch, for `ROLES.CAMP_ADMIN`; every rendering function
+  (`campAdminView`, `superAdminView`, `displacedView`, `drawCharts`, every
+  `*Row()` helper) is unchanged.
+- Verified with two new suites:
+  `supabase/tests/phase4.3-camp-isolation.test.mjs` (two active seeded
+  Camp Admin accounts in different camps, each proving `get_dashboard_statistics`
+  rejects the other's camp id and `null`, RLS returns zero rows for the
+  other camp's protected tables, and the rendered dashboard never shows
+  the other camp's name) and
+  `supabase/tests/phase4.3-dashboard-verification.test.mjs` (every rendered
+  stat card, the gender legend, and the live `chart-aid` Chart.js
+  instance's data, each compared against an independent query against the
+  same live database, for both accounts).
+- No `service_role` key or other private credential reaches the browser
+  (same assertion style as Phase 4.2's test).
