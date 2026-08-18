@@ -34,6 +34,7 @@ import { pageUrl } from '../core/router.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, STATUS, CHART_COLORS } from '../core/config.js';
+import { getSuperAdminDashboard } from '../supabase/dashboard.js';
 
 const shell = await mountShell({ active: 'dashboard.html', title: 'الرئيسية' });
 if (shell) init(shell);
@@ -55,7 +56,7 @@ async function init({ session, content }) {
   }
 }
 
-function collect(session) {
+async function collect(session) {
   // A displaced person has no relationship to camp-wide figures, so none are
   // computed for them — only their own file, family, aid and notifications.
   if (session.role === ROLES.DISPLACED) {
@@ -70,6 +71,16 @@ function collect(session) {
     };
   }
 
+  // Phase 4.2: Super Admin reads real data. Camp Admin stays on mock data
+  // until a later phase.
+  if (session.role === ROLES.SUPER_ADMIN) {
+    const real = await getSuperAdminDashboard();
+    return {
+      ...real,
+      notifications: select.notificationsFor(session.id).slice(0, 4),
+    };
+  }
+
   return {
     stats: select.statistics(session),
     byMonth: select.displacedByMonth(session),
@@ -77,9 +88,7 @@ function collect(session) {
     familySizes: select.familySizeDistribution(session),
     camps: select.campBreakdown(),
     requests: store.registrationRequests
-      .list((row) =>
-        session.role === ROLES.SUPER_ADMIN ? true : row.campId === session.campId
-      )
+      .list((row) => row.campId === session.campId)
       .filter((row) => row.status === STATUS.PENDING)
       .slice(0, 4),
     recentAid: select.searchAid({ scope: select.scopeFilter(session) }).slice(0, 5),
