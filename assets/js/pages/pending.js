@@ -35,6 +35,7 @@ function render(session) {
     definition('تاريخ تقديم الطلب', formatDate(session.createdAt)),
   ]);
 
+  document.body.classList.remove('app-loading');
   document.body.innerHTML = statusLayout({
     iconName: 'clock',
     tone: 'warning',

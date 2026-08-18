@@ -36,6 +36,7 @@ function demoList() {
 }
 
 function render() {
+  document.body.classList.remove('app-loading');
   document.body.innerHTML = authLayout({
     title: 'تسجيل الدخول',
     subtitle: 'أدخل بيانات حسابك للوصول إلى لوحة التحكم.',

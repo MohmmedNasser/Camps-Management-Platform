@@ -29,6 +29,7 @@ function campOptions() {
 }
 
 function render() {
+  document.body.classList.remove('app-loading');
   document.body.innerHTML = authLayout({
     title: 'إنشاء حساب جديد',
     subtitle: 'أدخل بياناتك الأساسية، وسيقوم مسؤول المخيم بمراجعة طلبك.',

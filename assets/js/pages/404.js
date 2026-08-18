@@ -14,6 +14,7 @@ ready(() => {
   const session = getSession();
   const home = homeFor(session);
 
+  document.body.classList.remove('app-loading');
   document.body.innerHTML = statusLayout({
     iconName: 'alertTriangle',
     tone: 'neutral',

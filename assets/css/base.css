@@ -194,6 +194,35 @@ samp {
   }
 }
 
+/* ---- Auth loading overlay ---------------------------------------------
+   Shown by default (class is present in every page's static HTML) while
+   guard()/guestOnly() resolve the real Supabase session; removed the
+   instant real content is about to replace document.body. */
+
+body.app-loading::before,
+body.app-loading::after {
+  content: '';
+  position: fixed;
+  z-index: 999;
+}
+
+body.app-loading::before {
+  inset: 0;
+  background: var(--color-bg);
+}
+
+body.app-loading::after {
+  top: 50%;
+  inset-inline-start: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border: 3px solid var(--color-border-strong);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
 /* ---- Print ----------------------------------------------------------- */
 
 @media print {

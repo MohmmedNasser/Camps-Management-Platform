@@ -35,6 +35,7 @@ function render(session) {
 
   const reason = (request && request.note) || 'لم يتم تسجيل سبب محدد. يرجى مراجعة إدارة المخيم.';
 
+  document.body.classList.remove('app-loading');
   document.body.innerHTML = statusLayout({
     iconName: 'xCircle',
     tone: 'error',

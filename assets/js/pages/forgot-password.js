@@ -15,6 +15,7 @@ if (!guestOnly()) {
 }
 
 function render() {
+  document.body.classList.remove('app-loading');
   document.body.innerHTML = authLayout({
     title: 'استعادة كلمة المرور',
     subtitle: 'أدخل بريدك الإلكتروني وسنرسل لك رابط إعادة التعيين.',
