@@ -10,7 +10,7 @@ import { inputField, bindForm } from '../ui/form.js';
 import { button, alert } from '../ui/components.js';
 import { guestOnly } from '../core/router.js';
 
-if (!guestOnly()) {
+if (!(await guestOnly())) {
   ready(render);
 }
 
