@@ -116,6 +116,7 @@ function mapMemberRow(row) {
     disability: row.disability,
     fatherStatus: row.father_status,
     motherStatus: row.mother_status,
+    tentType: row.tent_type,
   };
 }
 
