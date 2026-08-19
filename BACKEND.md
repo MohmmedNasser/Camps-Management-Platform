@@ -795,3 +795,59 @@ left mock.
   same live database, for both accounts).
 - No `service_role` key or other private credential reaches the browser
   (same assertion style as Phase 4.2's test).
+
+---
+
+## 20 · Phase 4.4 — Camp Admin families on real data
+
+`assets/js/pages/families.js`, `family-details.js` and `family-create.js`
+now read/write real data for the `camp_admin` role only, through four new
+or changed functions in `assets/js/supabase/families.js`:
+`getCampFamilies(campId)`, `getFamilyByReferenceCode(referenceCode)`,
+`deleteFamily(referenceCode)`, and a return-shape change to
+`createFamilyWithMembers()` (now resolves `{ id, referenceCode }` instead
+of the RPC's raw UUID — it had no prior caller). The mock-driven family
+filter predicate (`core/selectors.js`'s `matchesFamilyFilters()`) was
+extracted so the real Camp Admin list path and the still-mock
+`getFilteredFamilies()` share one filter implementation.
+
+- Every real row is keyed on `families.reference_code` (its own unique
+  index, independent of the UUID primary key) — the same convention the
+  mock's `id` field already used, so no shared rendering code
+  (`resultsView()`, `family-details.js`'s view/breadcrumb/members table)
+  needed to change.
+- `family_stats`/`family_member_facts` are `security_invoker=true` views,
+  so they inherit `family_members`' own camp-scoped RLS automatically —
+  no extra authorization work was needed to use them.
+- Delete is authorized entirely by `families_delete_camp_admin` RLS
+  (`is_camp_admin() AND camp_id = current_camp_id()`); the client never
+  compares camp ids as a gate. Deleting a family cascades to its members
+  and aid links at the database level (§4: "Families cascade to their
+  members") — a deliberate departure from the mock's "detach, don't
+  delete" behavior, reflected in the updated confirm-dialog copy.
+- `create_family_with_members`'s own camp-authorization check (`42501` if
+  a camp_admin's `p_camp_id` isn't their own) and the global unique index
+  on `family_members.national_id` remain the real enforcement points for
+  camp scoping and duplicate national IDs — the create form's live,
+  per-keystroke cross-camp duplicate check was removed in favor of
+  catching the RPC's 23505 error at submit time
+  (`isDuplicateNationalId()`, Phase 2, unused until now).
+- Super Admin's families list (mock, `campId` filter, `campName` column)
+  and the displaced person's "أسرتي" view are unchanged.
+- No backend change of any kind — no table, column, view, RPC, trigger,
+  RLS policy or migration was added or modified.
+- Verified with two new suites:
+  `supabase/tests/phase4.4-camp-isolation.test.mjs` (two active seeded
+  Camp Admin accounts, each proving RLS returns only their own camp's
+  families, another camp's family-details renders not-found, a delete
+  attempt against another camp's family affects zero rows via both the
+  app path and a raw client, and the rendered list/export never contain
+  another camp's reference codes) and
+  `supabase/tests/phase4.4-families-verification.test.mjs` (the rendered
+  list, every filter, the Excel export, family-details, and a real
+  end-to-end family creation, each compared against independent queries
+  against the same live database, plus an empty-result-set case). The
+  family-creation sub-test deletes the family it creates once its
+  assertions finish, so repeated runs never push a camp's family count
+  past `PAGE_SIZE` and break the unfiltered-list assertions.
+- No `service_role` key or other private credential reaches the browser.
