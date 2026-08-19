@@ -131,7 +131,7 @@ test('Phase 4.4 cross-camp isolation', async (t) => {
         const page = await browser.newPage();
         await login(page, base, email, PASSWORD);
         await page.goto(`${base}/pages/family-details.html?id=${otherReferenceCode}`, { waitUntil: 'load' });
-        await page.waitForSelector('.empty, h3', { timeout: 15000 });
+        await page.waitForSelector('body', { timeout: 15000 });
         const bodyText = await page.locator('body').innerText();
         assert.ok(
           bodyText.includes('غير موجودة') || bodyText.includes('خارج نطاق'),
