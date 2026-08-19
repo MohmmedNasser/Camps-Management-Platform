@@ -24,21 +24,25 @@ import {
 } from '../ui/record-forms.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
-import * as select from '../core/selectors.js';
+import { createFamilyWithMembers } from '../supabase/families.js';
+import { isDuplicateNationalId } from '../supabase/family-members.js';
 
 const shell = await mountShell({ active: 'families.html', title: 'إضافة أسرة' });
 if (shell) init(shell);
 
 function init({ session, content }) {
-  const familyId = select.nextFamilyId();
-  const camps = select.campOptions(session);
+  // select.campOptions(session) reads the mock camps table and never
+  // matches a real authenticated Camp Admin's session.campId (Phase 4.4
+  // spec's live-schema finding) — this page is Camp-Admin-only, so the
+  // admin's own session already IS the one valid option.
+  const camps = [{ value: session.campId, label: session.campLabel }];
 
   // Blocks are tracked by index and never renumbered, so removing "فرد 2" does
   // not silently rewrite the values the admin already typed into "فرد 3".
   const blocks = [];
   let nextIndex = 0;
 
-  content.innerHTML = view(session, familyId, camps);
+  content.innerHTML = view(session, camps);
 
   const form = qs('#family-form', content);
   const list = qs('#member-list', content);
@@ -51,14 +55,16 @@ function init({ session, content }) {
 
   /* ---- Duplicate national IDs ------------------------------------------ */
 
-  /**
-   * A national ID may not exist in the store already, and may not repeat
-   * inside this form. `self` is the block index being checked (null = head).
-   */
+  // select.nationalIdTaken(id) only checks the mock store; this page's
+  // Camp Admin can't see other camps' national IDs to pre-check them
+  // client-side (RLS), so the live cross-camp check is dropped. The DB's
+  // global unique index is the real boundary, surfaced at submit time via
+  // isDuplicateNationalId() above. What's left here — catching two blocks
+  // in THIS form using the same id — needs no server round trip and still
+  // runs on every keystroke.
   const isDuplicateId = (value, values, self = null) => {
     const id = String(value || '').trim();
     if (!id) return false;
-    if (select.nationalIdTaken(id)) return true;
 
     const others = [values.nationalId, ...blocks.map((i) => values[`member${i}_nationalId`])];
     const selfSlot = self === null ? 0 : blocks.indexOf(self) + 1;
@@ -116,51 +122,76 @@ function init({ session, content }) {
 
   /* ---- Submit ----------------------------------------------------------- */
 
+  /**
+   * camelCase form values -> the snake_case jsonb keys
+   * create_family_with_members's insert_family_member reads (Phase 4.4
+   * spec §1/§5.3). Covers both the head object (session values, all
+   * fields present) and each readMember() block (a smaller subset —
+   * the rest inherit from the head server-side).
+   */
+  const toMemberPayload = (values, overrides = {}) => ({
+    full_name: values.fullName.trim(),
+    full_name_en: (values.fullNameEn || '').trim(),
+    national_id: values.nationalId.trim(),
+    gender: values.gender,
+    birth_date: values.birthDate,
+    marital_status: values.maritalStatus,
+    nationality: values.nationality || 'palestinian',
+    passport_number: (values.passportNumber || '').trim(),
+    unrwa_number: (values.unrwaNumber || '').trim(),
+    phone: (values.phone || '').trim(),
+    alt_phone: (values.altPhone || '').trim(),
+    email: (values.email || '').trim(),
+    governorate: values.governorate,
+    city: values.city,
+    area: values.area,
+    tent_type: values.tentType,
+    origin_governorate: values.originGovernorate,
+    origin_city: values.originCity,
+    displacement_date: values.displacementDate,
+    chronic_diseases: (values.chronicDiseases || '').trim(),
+    disability: (values.disability || '').trim(),
+    father_status: values.fatherStatus || 'alive',
+    mother_status: values.motherStatus || 'alive',
+    is_pregnant: values.isPregnant ?? null,
+    is_breastfeeding: values.isBreastfeeding ?? null,
+    work_status: values.workStatus,
+    income_source: values.incomeSource,
+    monthly_income: Number(values.monthlyIncome || 0),
+    relationship: 'member',
+    ...overrides,
+  });
+
   bindForm(form, {
     schema,
-    onSubmit: (values) => {
+    onSubmit: async (values) => {
       const campId = values.campId || session.campId;
+      const memberCount = blocks.length;
+      const maternity = maternityFrom(values);
 
-      const result = select.createFamilyWithMembers({
-        campId,
-        notes: (values.notes || '').trim(),
-        head: {
-          fullName: values.fullName.trim(),
-          fullNameEn: (values.fullNameEn || '').trim(),
-          nationalId: values.nationalId.trim(),
-          gender: values.gender,
-          birthDate: values.birthDate,
-          maritalStatus: values.maritalStatus,
-          nationality: values.nationality || 'palestinian',
-          passportNumber: (values.passportNumber || '').trim(),
-          unrwaNumber: (values.unrwaNumber || '').trim(),
-          phone: values.phone.trim(),
-          altPhone: (values.altPhone || '').trim(),
-          email: (values.email || '').trim(),
-          governorate: values.governorate,
-          city: values.city,
-          area: values.area,
-          tentType: values.tentType,
-          originGovernorate: values.originGovernorate,
-          originCity: values.originCity,
-          displacementDate: values.displacementDate,
-          chronicDiseases: (values.chronicDiseases || '').trim(),
-          disability: (values.disability || '').trim(),
-          fatherStatus: values.fatherStatus || 'alive',
-          motherStatus: values.motherStatus || 'alive',
-          ...maternityFrom(values),
-          workStatus: values.workStatus,
-          incomeSource: values.incomeSource,
-          monthlyIncome: Number(values.monthlyIncome || 0),
-        },
-        members: blocks.map((index) => readMember(values, index)),
-      });
-
-      toast.success(
-        'تم الإنشاء',
-        `تم إنشاء الأسرة ${result.family.id} مع ${result.members.length + 1} من الأفراد.`
-      );
-      go('family-details.html', { id: result.family.id });
+      try {
+        const result = await createFamilyWithMembers({
+          campId,
+          notes: (values.notes || '').trim(),
+          head: toMemberPayload(
+            { ...values, isPregnant: maternity.isPregnant, isBreastfeeding: maternity.isBreastfeeding },
+            { relationship: 'head', status: 'approved' }
+          ),
+          members: blocks.map((index) => toMemberPayload(readMember(values, index))),
+        });
+        toast.success('تم الإنشاء', `تم إنشاء الأسرة ${result.referenceCode} مع ${memberCount + 1} من الأفراد.`);
+        go('family-details.html', { id: result.referenceCode });
+      } catch (error) {
+        if (isDuplicateNationalId(error)) {
+          toast.error(
+            'رقم هوية مكرر',
+            'أحد أرقام الهوية المدخلة مسجّل بالفعل لدى أسرة أخرى. تحقق من رقم رب الأسرة وكل فرد ثم أعد المحاولة.'
+          );
+          return;
+        }
+        console.error(error);
+        toast.error('تعذر الإنشاء', 'حدث خطأ أثناء حفظ الأسرة، حاول مرة أخرى.');
+      }
     },
   });
 
@@ -171,7 +202,7 @@ function init({ session, content }) {
 
 /* ---- Markup -------------------------------------------------------------- */
 
-function view(session, familyId, camps) {
+function view(session, camps) {
   return `
     ${breadcrumb([{ label: 'الأسر', href: pageUrl('families.html') }, { label: 'إضافة أسرة' }])}
     ${pageHeader({
@@ -182,7 +213,7 @@ function view(session, familyId, camps) {
     ${alert({
       variant: 'info',
       title: 'رقم الأسرة يُولَّد تلقائياً',
-      text: `سيحمل هذا السجل الرقم ${familyId}، ولا يمكن تعديله لاحقاً. سجّل بيانات رب الأسرة ثم أضف بقية الأفراد، واحفظ الجميع دفعة واحدة.`,
+      text: 'سيُولَّد رقم الأسرة تلقائياً عند الحفظ، ولا يمكن تعديله لاحقاً. سجّل بيانات رب الأسرة ثم أضف بقية الأفراد، واحفظ الجميع دفعة واحدة.',
     })}
 
     <form class="form u-mt-5" id="family-form" novalidate>
