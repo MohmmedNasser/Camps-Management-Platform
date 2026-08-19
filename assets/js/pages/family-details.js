@@ -69,11 +69,11 @@ async function init({ session, content }) {
   }
 }
 
-async function collect(session) {
+function collect(session) {
   const { id } = params();
 
   if (session.role === ROLES.CAMP_ADMIN) {
-    return await collectReal(session, id);
+    return collectReal(session, id);
   }
 
   // A displaced person only ever sees their own family, whatever the URL says.
