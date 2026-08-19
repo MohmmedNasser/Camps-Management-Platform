@@ -30,7 +30,10 @@ import { pageUrl, go } from '../core/router.js';
 import { can, getSession } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
-import { ROLES, labelOf, GENDERS, RELATIONSHIPS, TENT_TYPES } from '../core/config.js';
+import { ROLES, labelOf, GENDERS, RELATIONSHIPS, TENT_TYPES, DOCUMENT_CATEGORIES } from '../core/config.js';
+import { getFamilyByReferenceCode, deleteFamily } from '../supabase/families.js';
+import { getFamilyAidHistory } from '../supabase/aids.js';
+import { listDocuments } from '../supabase/documents.js';
 
 // A displaced person reaches this page through "أسرتي"; an administrator
 // through the families list — highlight whichever nav entry they came from.
@@ -69,6 +72,10 @@ async function init({ session, content }) {
 function collect(session) {
   const { id } = params();
 
+  if (session.role === ROLES.CAMP_ADMIN) {
+    return collectReal(session, id);
+  }
+
   // A displaced person only ever sees their own family, whatever the URL says.
   const familyId =
     session.role === ROLES.DISPLACED
@@ -79,12 +86,52 @@ function collect(session) {
 
   const family = select.familyWithStats(familyId);
   if (!family) return { family: null };
-  if (session.role === ROLES.CAMP_ADMIN && family.campId !== session.campId) return { family: null };
 
   return {
     family,
     aid: select.aidForFamily(familyId),
     documents: store.documents.list((row) => row.familyId === familyId).map(select.documentRow),
+  };
+}
+
+async function collectReal(session, referenceCode) {
+  if (!referenceCode) return { family: null };
+  const family = await getFamilyByReferenceCode(referenceCode);
+  // Redundant, UX-only narrowing — RLS on `families` already prevents
+  // getFamilyByReferenceCode from returning another camp's row at all
+  // (Phase 4.4 spec §5.2). This only picks the not-found copy for a
+  // same-camp typo; it is not, and is not needed as, a security check.
+  if (!family || family.campId !== session.campId) return { family: null };
+
+  const [aidRows, docsResult] = await Promise.all([
+    getFamilyAidHistory(family._dbId),
+    listDocuments({ familyId: family._dbId }),
+  ]);
+
+  return {
+    family: { ...family, campName: session.campLabel },
+    aid: aidRows.map(mapAidHistoryRow),
+    documents: docsResult.rows.map(mapDocumentRow),
+  };
+}
+
+function mapAidHistoryRow(row) {
+  const d = row.distribution;
+  const labels = (d.aid_distribution_types || []).map((t) => t.aid_type?.label_ar).filter(Boolean);
+  return {
+    id: d.id,
+    typeLabels: labels.join('، '),
+    organizationName: d.organization?.name || '—',
+    date: d.distributed_on,
+  };
+}
+
+function mapDocumentRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    size: row.file_size,
+    categoryLabel: labelOf(DOCUMENT_CATEGORIES, row.category),
   };
 }
 
@@ -317,13 +364,25 @@ function documentRow(row) {
 
 function wire(content, session, { family }) {
   delegate(content, 'click', '[data-delete]', async () => {
+    const isCampAdmin = session.role === ROLES.CAMP_ADMIN;
     const ok = await confirmDialog({
       title: 'حذف الأسرة',
-      text: `سيتم حذف الأسرة ${family.id} وسجل مساعداتها. يبقى أفرادها مسجلين كنازحين دون أسرة.`,
+      text: isCampAdmin
+        ? `سيتم حذف الأسرة ${family.id} وجميع أفرادها وسجل مساعداتها. لا يمكن التراجع عن هذا الإجراء.`
+        : `سيتم حذف الأسرة ${family.id} وسجل مساعداتها. يبقى أفرادها مسجلين كنازحين دون أسرة.`,
       confirmLabel: 'حذف الأسرة',
     });
     if (!ok) return;
-    select.removeFamily(family.id);
+
+    if (isCampAdmin) {
+      const deleted = await deleteFamily(family.id);
+      if (!deleted) {
+        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذه الأسرة.');
+        return;
+      }
+    } else {
+      select.removeFamily(family.id);
+    }
     toast.success('تم الحذف', 'تم حذف الأسرة.');
     go('families.html');
   });
