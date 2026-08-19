@@ -136,7 +136,7 @@ export async function getFamilyByReferenceCode(referenceCode) {
       .select(
         'id, reference_code, camp_id, notes, created_at, ' +
           'head:family_members!families_head_member_id_fkey(full_name, tent_type), ' +
-          'family_members(*)'
+          'family_members!family_members_family_id_fkey(*)'
       )
       .eq('reference_code', referenceCode)
       .maybeSingle()
