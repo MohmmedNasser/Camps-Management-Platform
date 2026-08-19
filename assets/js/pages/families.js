@@ -36,6 +36,7 @@ import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
+import { getCampFamilies, deleteFamily } from '../supabase/families.js';
 import { FAMILY_COLUMNS, familyExportRow } from '../core/exports.js';
 import { exportSheet, timestampedName } from '../utils/xlsx.js';
 import { ROLES, PAGE_SIZE, FAMILY_SIZES, YES_NO } from '../core/config.js';
@@ -252,14 +253,28 @@ function init({ session, content }) {
   });
 
   delegate(content, 'click', '[data-delete]', async (event, node) => {
+    const id = node.dataset.delete;
+    const isCampAdmin = session.role === ROLES.CAMP_ADMIN;
     const ok = await confirmDialog({
       title: 'حذف الأسرة',
-      text: `سيتم حذف الأسرة ${node.dataset.delete} وسجل مساعداتها. يبقى أفرادها مسجلين كنازحين دون أسرة.`,
+      text: isCampAdmin
+        ? `سيتم حذف الأسرة ${id} وجميع أفرادها وسجل مساعداتها. لا يمكن التراجع عن هذا الإجراء.`
+        : `سيتم حذف الأسرة ${id} وسجل مساعداتها. يبقى أفرادها مسجلين كنازحين دون أسرة.`,
       confirmLabel: 'حذف الأسرة',
     });
     if (!ok) return;
-    select.removeFamily(node.dataset.delete);
-    toast.success('تم الحذف', 'تم حذف الأسرة وفك ارتباط أفرادها.');
+
+    if (isCampAdmin) {
+      const deleted = await deleteFamily(id);
+      if (!deleted) {
+        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذه الأسرة.');
+        return;
+      }
+      toast.success('تم الحذف', 'تم حذف الأسرة وأفرادها.');
+    } else {
+      select.removeFamily(id);
+      toast.success('تم الحذف', 'تم حذف الأسرة وفك ارتباط أفرادها.');
+    }
     load(session);
   });
 
@@ -285,8 +300,12 @@ function init({ session, content }) {
 /* ---- Data + rendering ----------------------------------------------------- */
 
 /** The single query behind the table, the count and the export. */
-function collect(session) {
-  return select.getFilteredFamilies(session, { query: state.q, ...filterValues() });
+async function collect(session) {
+  if (session.role !== ROLES.CAMP_ADMIN) {
+    return select.getFilteredFamilies(session, { query: state.q, ...filterValues() });
+  }
+  const rows = await getCampFamilies(session.campId);
+  return rows.filter((family) => select.matchesFamilyFilters(family, { query: state.q, ...filterValues() }));
 }
 
 async function load(session) {
