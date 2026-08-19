@@ -206,18 +206,17 @@ export function familyFacts(members) {
 }
 
 /**
- * Families matching a search term AND every active filter.
- *
- * A family matches a member-characteristic filter when **at least one** of its
- * members satisfies it (spec §12). Scope is derived from the session, so a
- * Camp Admin cannot reach another camp's families through the URL.
+ * Whether one family (already shaped with familyFacts()'s counts, or the
+ * equivalent real-data shape from getCampFamilies()) matches a search term
+ * and every active member-characteristic filter. A family matches a
+ * characteristic filter when at least one of its members satisfies it
+ * (domain spec §12). Shared by the mock getFilteredFamilies() below and by
+ * the real Camp Admin path in assets/js/pages/families.js (Phase 4.4) —
+ * one filter implementation, so the two paths can never disagree.
  */
-export function getFilteredFamilies(session, filters = {}) {
-  if (!session || session.role === ROLES.DISPLACED) return [];
-
+export function matchesFamilyFilters(family, filters = {}) {
   const {
     query = '',
-    campId = '',
     size = '',
     hasChildren = '',
     hasUnder3 = '',
@@ -230,8 +229,41 @@ export function getFilteredFamilies(session, filters = {}) {
   } = filters;
 
   const term = query.trim().toLowerCase();
-  const camp = scopedCampId(session, campId);
   const bucket = FAMILY_SIZES.find((entry) => entry.value === size);
+
+  if (bucket) {
+    if (family.membersCount < bucket.min) return false;
+    if (bucket.max !== null && family.membersCount > bucket.max) return false;
+  }
+  if (!matchesYesNo(hasChildren, family.childrenUnder18)) return false;
+  if (!matchesYesNo(hasUnder3, family.childrenUnder3)) return false;
+  if (!matchesYesNo(hasUnder2, family.childrenUnder2)) return false;
+  if (!matchesYesNo(hasUnder1, family.childrenUnder1)) return false;
+  if (!matchesYesNo(hasOrphan, family.orphans)) return false;
+  if (!matchesYesNo(hasChronic, family.chronic)) return false;
+  if (!matchesYesNo(hasBreastfeeding, family.breastfeeding)) return false;
+  if (!matchesYesNo(hasPregnant, family.pregnant)) return false;
+
+  if (!term) return true;
+  return (
+    family.id.toLowerCase().includes(term) ||
+    family.headName.toLowerCase().includes(term) ||
+    (family.notes || '').toLowerCase().includes(term)
+  );
+}
+
+/**
+ * Families matching a search term AND every active filter.
+ *
+ * A family matches a member-characteristic filter when **at least one** of its
+ * members satisfies it (spec §12). Scope is derived from the session, so a
+ * Camp Admin cannot reach another camp's families through the URL.
+ */
+export function getFilteredFamilies(session, filters = {}) {
+  if (!session || session.role === ROLES.DISPLACED) return [];
+
+  const { campId = '' } = filters;
+  const camp = scopedCampId(session, campId);
   const index = membersByFamily();
 
   return store.families
@@ -258,27 +290,7 @@ export function getFilteredFamilies(session, filters = {}) {
         hasChronic: facts.chronic > 0,
       };
     })
-    .filter((family) => {
-      if (bucket) {
-        if (family.membersCount < bucket.min) return false;
-        if (bucket.max !== null && family.membersCount > bucket.max) return false;
-      }
-      if (!matchesYesNo(hasChildren, family.childrenUnder18)) return false;
-      if (!matchesYesNo(hasUnder3, family.childrenUnder3)) return false;
-      if (!matchesYesNo(hasUnder2, family.childrenUnder2)) return false;
-      if (!matchesYesNo(hasUnder1, family.childrenUnder1)) return false;
-      if (!matchesYesNo(hasOrphan, family.orphans)) return false;
-      if (!matchesYesNo(hasChronic, family.chronic)) return false;
-      if (!matchesYesNo(hasBreastfeeding, family.breastfeeding)) return false;
-      if (!matchesYesNo(hasPregnant, family.pregnant)) return false;
-
-      if (!term) return true;
-      return (
-        family.id.toLowerCase().includes(term) ||
-        family.headName.toLowerCase().includes(term) ||
-        (family.notes || '').toLowerCase().includes(term)
-      );
-    })
+    .filter((family) => matchesFamilyFilters(family, filters))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
