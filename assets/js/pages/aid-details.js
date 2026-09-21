@@ -26,6 +26,7 @@ import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, AID_TYPES } from '../core/config.js';
+import { getAidDistribution, getSiblingDistributions, deleteAidDistribution } from '../supabase/aids.js';
 
 const shell = await mountShell({ active: 'aid.html', title: 'تفاصيل المساعدة' });
 if (shell) init(shell);
@@ -48,7 +49,7 @@ async function init({ session, content }) {
     }
 
     content.innerHTML = view(session, data);
-    wire(content, data);
+    wire(content, session, data);
   } catch (error) {
     console.error(error);
     content.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -57,12 +58,10 @@ async function init({ session, content }) {
 }
 
 function collect(session, id) {
+  if (session.role === ROLES.CAMP_ADMIN) return collectReal(session, id);
+
   const raw = store.aid.get(id);
   if (!raw) return { record: null };
-
-  // Camp Admin: own camp only. This screen is not offered to a displaced
-  // person at all — they read their aid history as a plain list.
-  if (session.role === ROLES.CAMP_ADMIN && raw.campId !== session.campId) return { record: null };
 
   return {
     record: select.aidRow(raw),
@@ -74,6 +73,27 @@ function collect(session, id) {
     )
       .filter((row) => row.id !== raw.id)
       .slice(0, 5),
+  };
+}
+
+/**
+ * `record.campId !== session.campId` is redundant, UX-only narrowing — RLS
+ * on `aid_distributions` (`aid_distributions_select_scoped`) already
+ * prevents `getAidDistribution()` from returning another camp's row at all
+ * (Phase 4.6 spec, same convention as `displaced-details.js`'s
+ * `collectReal()`).
+ */
+async function collectReal(session, id) {
+  const record = await getAidDistribution(id);
+  if (!record || record.campId !== session.campId) return { record: null };
+
+  const siblings = await getSiblingDistributions(record.familyDbIds, record.id);
+
+  return {
+    record: { ...record, campName: session.campLabel },
+    donor: record.donor,
+    createdByName: record.createdByName,
+    siblings: siblings.map((row) => ({ ...row, campName: session.campLabel })),
   };
 }
 
@@ -205,7 +225,7 @@ function view(session, { record, donor, createdByName, siblings }) {
     </div>`;
 }
 
-function wire(content, { record }) {
+function wire(content, session, { record }) {
   delegate(content, 'click', '[data-delete]', async () => {
     const ok = await confirmDialog({
       title: 'حذف سجل المساعدة',
@@ -213,6 +233,23 @@ function wire(content, { record }) {
       confirmLabel: 'حذف',
     });
     if (!ok) return;
+
+    if (session.role === ROLES.CAMP_ADMIN) {
+      try {
+        const deleted = await deleteAidDistribution(record.id);
+        if (!deleted) {
+          toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
+          return;
+        }
+        toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
+        go('aid.html');
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الحذف', 'حدث خطأ أثناء الحذف، حاول مرة أخرى.');
+      }
+      return;
+    }
+
     store.aid.remove(record.id);
     toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
     go('aid.html');

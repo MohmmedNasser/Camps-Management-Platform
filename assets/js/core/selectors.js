@@ -253,6 +253,36 @@ export function matchesFamilyFilters(family, filters = {}) {
 }
 
 /**
+ * Whether one aid-distribution row (the shape `getCampAidDistributions()`/
+ * `getAidDistribution()` in `supabase/aids.js` return) matches a search term
+ * and every active filter — Phase 4.6's real Camp Admin aid list.
+ *
+ * Deliberately NOT an extraction of `searchAid()` above: that mock function
+ * filters mock `store.aid` records (`familyIds` = reference-code strings,
+ * `organizationId` = a mock id like `'org-1'`); this filters real rows
+ * (`familyDbIds` = family UUIDs, `organizationId` = a real UUID), matching
+ * the option values `getCampFamilyOptions()`/`listOrganizationOptions()`
+ * hand the filter panel — same convention `matchesDisplacedFilters()` set.
+ */
+export function matchesAidFilters(row, filters = {}) {
+  const { query = '', type = '', organizationId = '', familyId = '' } = filters;
+
+  if (type && !(row.types || []).includes(type)) return false;
+  if (organizationId && row.organizationId !== organizationId) return false;
+  if (familyId && !(row.familyDbIds || []).includes(familyId)) return false;
+
+  const term = query.trim().toLowerCase();
+  if (!term) return true;
+  const headNames = (row.beneficiaries || []).map((b) => (b.headName || '').toLowerCase());
+  return (
+    (row.familyIds || []).some((id) => id.toLowerCase().includes(term)) ||
+    headNames.some((name) => name.includes(term)) ||
+    (row.organizationName || '').toLowerCase().includes(term) ||
+    (row.typeLabels || '').toLowerCase().includes(term)
+  );
+}
+
+/**
  * Whether one displaced-person row (mock `displacedRow()` shape, or the
  * equivalent real-data shape from `getCampDisplacedPersons()`) matches a
  * search term and every active filter — Phase 4.5's real Camp Admin path.

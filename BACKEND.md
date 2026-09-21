@@ -935,3 +935,96 @@ to `aids.js` for the list's aid-type/donor filters.
   queries against the same live database). Both new suites' created rows
   are deleted once their assertions finish.
 - No `service_role` key or other private credential reaches the browser.
+
+---
+
+## 22 · Phase 4.6 — Camp Admin aid management on real data
+
+`assets/js/pages/aid.js`, `aid-details.js`, `aid-create.js` and
+`aid-edit.js` now read/write real data for the `camp_admin` role. `aid.js`
+and `aid-details.js` are multi-role pages (Super Admin/displaced also open
+them), so each gets a real branch alongside the untouched mock one, same
+convention as `families.js`/`displaced.js`/`family-details.js`/
+`displaced-details.js`. `aid-create.html`/`aid-edit.html` are Camp-Admin-
+only in `PAGE_ACCESS` — like `family-create.html` before them — so those two
+are a full replacement with no mock branch to preserve.
+
+Five new functions in `assets/js/supabase/aids.js` (`getCampAidDistributions`,
+`getAidDistribution`, `getSiblingDistributions`, `updateAidDistribution`,
+`deleteAidDistribution`), one each in `families.js`
+(`getCampFamilyOptions`) and `organizations.js` (`listOrganizationOptions`),
+and one new, independent `matchesAidFilters()` in `core/selectors.js` —
+Phase 4.5's convention of a separate real-path predicate rather than an
+extraction of the mock's `searchAid()`, proven equivalent by the DB-vs-UI
+suite instead of by shared code.
+
+- **No backend change of any kind** — no table, column, view, RPC, trigger,
+  RLS policy or migration was added or modified. `aid_distributions` and
+  both junction tables already granted Camp Admin full CRUD, own-camp-
+  scoped (confirmed live before writing any code), so create reuses the
+  Phase 2 `create_aid_distribution` RPC unchanged and **edit needed no new
+  RPC**: the deferred `aid_distributions_complete` constraint trigger only
+  fires on the parent row's own insert/update, never on a junction table by
+  itself, so `updateAidDistribution()` updates the parent row and then
+  diffs the type/family junction rows with plain `.insert()`/`.delete()`
+  calls — insertions applied before removals, so the distribution is never
+  left transiently without a type or a beneficiary across the separate
+  PostgREST requests (§8/§12: each is its own transaction). Delete is a
+  plain `.delete()` on `aid_distributions`; both junctions cascade
+  (`on delete cascade`, confirmed live).
+- **Two id spaces are kept side by side on purpose.** A family's
+  `reference_code` (`FAM-000001`) is what every existing caller
+  (`families.js`, `family-details.js`, `displaced-details.js`) already
+  hands `aid-create.html` via `?familyId=`, what the details page displays
+  and links to `family-details.html` with, and what backs search/summary
+  counts — `mapAidDistributionRow()`'s `familyIds`. A family's UUID is what
+  `create_aid_distribution`/`updateAidDistribution()` actually need and what
+  the real beneficiary multi-select's option `value`s are —
+  `familyDbIds`/`getCampFamilyOptions()`. Confusing the two would either
+  break the existing deep-link handoff (every caller passes the human code)
+  or send a reference-code string where the RPC expects a `uuid`.
+- **The mock `select.organizationOptions()`/`select.familyOptions()` were
+  never usable here.** Confirmed live: mock organisation ids are strings
+  like `'org-1'`; `supabase/seed/seed.mjs` inserts each into a real project
+  with a fresh Postgres-generated UUID and keeps its own id-mapping table —
+  the mock id and the real UUID are never the same value. Every real Camp
+  Admin option list in this phase (`getCampFamilyOptions`,
+  `listOrganizationOptions`) is a small, separate, unpaginated query instead,
+  matching `getCampFamilies()`/`getCampDisplacedPersons()`'s existing
+  "fetch all, filter client-side" convention for a camp-sized dataset. (This
+  same mismatch already exists, unaddressed, in Phase 4.5's real
+  `displaced.js` organisation filter — out of scope here since that page
+  is not part of this phase.)
+- **`aid.js`'s filter panel needed real option lists before its first
+  render**, but `filterSpec()` must stay synchronous (`initToolbar()`'s
+  `getFilters` callback calls it directly). Fixed by fetching both real
+  option lists once in `init()` — now `async`, showing a table skeleton
+  first — into a small module-level cache `filterSpec()` reads
+  synchronously, rather than making the filter descriptor function itself
+  async.
+- **Real aid creation does not send a notification to the family.** The
+  mock path's `aid-create.js` created `notifications` rows client-side;
+  notifications are explicitly out of scope for this phase (no other phase
+  has wired client-side notification creation from a non-workflow page
+  either — the four Phase 1 workflow RPCs are the only place that happens
+  today). Documented here as a deliberate limitation, not a silent gap.
+- Super Admin's aid list/details (still mock) and the displaced person's
+  own read-only aid history (still mock) are unchanged.
+- Verified with two new suites:
+  `supabase/tests/phase4.6-camp-isolation.test.mjs` (two active seeded
+  Camp Admin accounts, each proving RLS returns only their own camp's
+  `aid_distributions`, another camp's `aid-details` renders not-found, a
+  raw-client delete/update against another camp's distribution affects zero
+  rows, `create_aid_distribution` into another camp is rejected with
+  `42501`, assigning another camp's family as a beneficiary of an own-camp
+  distribution is rejected, and the rendered list/export never contain
+  another camp's family codes) and
+  `supabase/tests/phase4.6-aids-verification.test.mjs` (the rendered list,
+  the type/donor/beneficiary-family filters, aid-details, and the Excel
+  export, each compared against an independent query against the same live
+  database; a real create → edit → delete round trip through the actual
+  forms with a DB-level assertion that the edited date landed in Postgres,
+  not just on screen; and an empty-result case). Both new suites' created
+  rows are deleted once their assertions finish — verified against the live
+  project after the run: zero leftover rows.
+- No `service_role` key or other private credential reaches the browser.

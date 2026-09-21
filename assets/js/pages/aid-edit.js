@@ -1,5 +1,5 @@
 /**
- * Edit an aid record (Camp Admin only).
+ * Edit an aid record (Camp Admin only, real Supabase data — Phase 4.6).
  */
 
 import { qs, params, delegate } from '../utils/dom.js';
@@ -19,9 +19,10 @@ import { initMultiSelect } from '../ui/combobox.js';
 import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
-import { can, inScope } from '../core/auth.js';
-import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import { can } from '../core/auth.js';
+import { getAidDistribution, updateAidDistribution, deleteAidDistribution } from '../supabase/aids.js';
+import { getCampFamilyOptions } from '../supabase/families.js';
+import { listOrganizationOptions } from '../supabase/organizations.js';
 
 const shell = await mountShell({ active: 'aid.html', title: 'تعديل مساعدة' });
 if (shell) init(shell);
@@ -31,9 +32,12 @@ async function init({ session, content }) {
   content.innerHTML = skeletonForm(6);
 
   try {
-    const record = await store.load(() => store.aid.get(id));
-
-    if (!record || !inScope(record, session)) {
+    // record.campId !== session.campId is redundant, UX-only narrowing — RLS
+    // on aid_distributions (aid_distributions_select_scoped) already prevents
+    // getAidDistribution() from returning another camp's row at all (Phase
+    // 4.6 spec, same convention as displaced-edit.js's loadReal()).
+    const record = await getAidDistribution(id);
+    if (!record || record.campId !== session.campId) {
       content.innerHTML = emptyState({
         iconName: 'alertTriangle',
         title: 'سجل المساعدة غير موجود',
@@ -43,7 +47,12 @@ async function init({ session, content }) {
       return;
     }
 
-    render({ session, content, record });
+    const [organizations, families] = await Promise.all([
+      listOrganizationOptions(),
+      getCampFamilyOptions(session.campId),
+    ]);
+
+    render({ session, content, record, organizations, families });
   } catch (error) {
     console.error(error);
     content.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -51,16 +60,11 @@ async function init({ session, content }) {
   }
 }
 
-function render({ session, content, record }) {
-  const campId = record.campId || session.campId;
-  const organizations = select.organizationOptions();
-  const families = select.familyOptions(campId);
-  const row = select.aidRow(record);
-
+function render({ session, content, record, organizations, families }) {
   content.innerHTML = `
     ${breadcrumb([
       { label: 'المساعدات', href: pageUrl('aid.html') },
-      { label: row.typeLabels || 'مساعدة', href: pageUrl('aid-details.html', { id: record.id }) },
+      { label: record.typeLabels || 'مساعدة', href: pageUrl('aid-details.html', { id: record.id }) },
       { label: 'تعديل' },
     ])}
     ${pageHeader({
@@ -70,13 +74,16 @@ function render({ session, content, record }) {
         ? button({ label: 'حذف السجل', variant: 'danger', iconName: 'trash', attrs: 'data-delete' })
         : '',
     })}
-    ${formSummary([row.typeLabels, row.organizationName, `${row.beneficiaryCount} أسرة مستفيدة`])}
+    ${formSummary([record.typeLabels, record.organizationName, `${record.beneficiaryCount} أسرة مستفيدة`])}
 
     <form class="form" id="aid-form" novalidate>
-      ${aidFields(record, {
-        organizations,
-        selectedFamilies: families.filter((f) => (record.familyIds || []).includes(f.value)),
-      })}
+      ${aidFields(
+        { organizationId: record.organizationId, date: record.date, types: record.types },
+        {
+          organizations,
+          selectedFamilies: families.filter((f) => (record.familyDbIds || []).includes(f.value)),
+        }
+      )}
       <div class="form-actions">
         ${button({
           label: 'إلغاء',
@@ -90,28 +97,33 @@ function render({ session, content, record }) {
   const form = qs('#aid-form', content);
   initMultiSelect(form, {
     name: 'familyIds',
-    search: (query) => select.searchFamilyOptions(families, query),
+    search: (query) => searchOptions(families, query),
     selectAllSource: () => families,
     countLabel: familyCountLabel,
   });
 
   bindForm(form, {
     schema: aidSchema(),
-    onSubmit: (values) => {
+    onSubmit: async (values) => {
       const familyIds = Array.isArray(values.familyIds) ? values.familyIds : [];
       const eligibleFamilyIds = new Set(families.map((f) => f.value));
       const allFamiliesSelected =
         eligibleFamilyIds.size > 0 && familyIds.length === eligibleFamilyIds.size;
-      store.aid.update(record.id, {
-        organizationId: values.organizationId,
-        types: values.types,
-        familyIds,
-        allFamiliesSelected,
-        campId,
-        date: values.date,
-      });
-      toast.success('تم الحفظ', 'تم تحديث سجل المساعدة.');
-      go('aid-details.html', { id: record.id });
+
+      try {
+        await updateAidDistribution(record.id, {
+          organizationId: values.organizationId,
+          distributedOn: values.date,
+          aidTypeCodes: values.types,
+          familyIds,
+          allFamiliesSelected,
+        });
+        toast.success('تم الحفظ', 'تم تحديث سجل المساعدة.');
+        go('aid-details.html', { id: record.id });
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الحفظ', 'حدث خطأ أثناء الحفظ، حاول مرة أخرى.');
+      }
     },
   });
 
@@ -122,8 +134,24 @@ function render({ session, content, record }) {
       confirmLabel: 'حذف',
     });
     if (!ok) return;
-    store.aid.remove(record.id);
-    toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
-    go('aid.html');
+    try {
+      const deleted = await deleteAidDistribution(record.id);
+      if (!deleted) {
+        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
+        return;
+      }
+      toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
+      go('aid.html');
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الحذف', 'حدث خطأ أثناء الحذف، حاول مرة أخرى.');
+    }
   });
+}
+
+/** Matches the mock's `select.searchFamilyOptions()` — a plain label substring match. */
+function searchOptions(options, query = '') {
+  const term = query.trim().toLowerCase();
+  if (!term) return options;
+  return options.filter((option) => option.label.toLowerCase().includes(term));
 }

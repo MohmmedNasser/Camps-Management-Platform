@@ -31,8 +31,19 @@ import * as select from '../core/selectors.js';
 import { ROLES, AID_TYPES, PAGE_SIZE } from '../core/config.js';
 import { AID_COLUMNS, aidExportRow } from '../core/exports.js';
 import { exportSheet, timestampedName } from '../utils/xlsx.js';
+import { getCampAidDistributions, deleteAidDistribution } from '../supabase/aids.js';
+import { getCampFamilyOptions } from '../supabase/families.js';
+import { listOrganizationOptions } from '../supabase/organizations.js';
 
 const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
+
+// Populated once, before the first render, for a real Camp Admin session —
+// select.organizationOptions()/select.familyOptions() read the mock store
+// and never match a real authenticated Camp Admin's ids (Phase 4.6 live-
+// schema finding). filterSpec() below must stay synchronous (it also backs
+// initToolbar()'s getFilters callback), so the real option lists are
+// fetched once here rather than inline in filterSpec().
+const campAdminOptions = { organizations: [], families: [] };
 
 const shell = await mountShell({ active: 'aid.html', title: 'المساعدات' });
 if (shell) init(shell);
@@ -53,6 +64,7 @@ function activeFilterCount() {
 /** Rebuilt fresh on every call so the sheet never shows stale values. */
 function filterSpec(session) {
   const isOwn = session.role === ROLES.DISPLACED;
+  const isCampAdmin = session.role === ROLES.CAMP_ADMIN;
   return [
     {
       name: 'type',
@@ -63,7 +75,7 @@ function filterSpec(session) {
     {
       name: 'organizationId',
       label: 'الجهة المانحة',
-      options: select.organizationOptions(),
+      options: isCampAdmin ? campAdminOptions.organizations : select.organizationOptions(),
       value: state.organizationId,
     },
     ...(isOwn
@@ -72,15 +84,29 @@ function filterSpec(session) {
           {
             name: 'familyId',
             label: 'الأسرة',
-            options: select.familyOptions(session.role === ROLES.CAMP_ADMIN ? session.campId : ''),
+            options: isCampAdmin ? campAdminOptions.families : select.familyOptions(''),
             value: state.familyId,
           },
         ]),
   ];
 }
 
-function init({ session, content }) {
+async function init({ session, content }) {
   readQuery();
+  if (session.role === ROLES.CAMP_ADMIN) {
+    content.innerHTML = skeletonTable(6);
+    const [organizations, families] = await Promise.all([
+      listOrganizationOptions(),
+      getCampFamilyOptions(session.campId),
+    ]);
+    campAdminOptions.organizations = organizations;
+    campAdminOptions.families = families;
+  }
+
+  renderPage(session, content);
+}
+
+function renderPage(session, content) {
   const isOwn = session.role === ROLES.DISPLACED;
 
   content.innerHTML = `
@@ -159,6 +185,23 @@ function init({ session, content }) {
       confirmLabel: 'حذف',
     });
     if (!ok) return;
+
+    if (session.role === ROLES.CAMP_ADMIN) {
+      try {
+        const deleted = await deleteAidDistribution(node.dataset.delete);
+        if (!deleted) {
+          toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
+          return;
+        }
+        toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
+        load(session);
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الحذف', 'حدث خطأ أثناء الحذف، حاول مرة أخرى.');
+      }
+      return;
+    }
+
     store.aid.remove(node.dataset.delete);
     toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
     load(session);
@@ -195,17 +238,33 @@ async function load(session) {
 }
 
 /**
- * One query for all three roles: `scopeFilter` is what narrows a displaced
- * person to their own family's records, so the page never filters itself.
+ * Super Admin and displaced sessions read the mock store, scoped by
+ * `scopeFilter`; a Camp Admin reads real, RLS-scoped Supabase data and
+ * filters it with the equivalent, independent `matchesAidFilters()`
+ * (Phase 4.6, same split Phase 4.4/4.5 used for families/displaced).
  */
-function collect(session) {
-  return select.searchAid({
-    query: state.q,
-    type: state.type,
-    organizationId: state.organizationId,
-    familyId: state.familyId,
-    scope: select.scopeFilter(session),
-  });
+async function collect(session) {
+  if (session.role !== ROLES.CAMP_ADMIN) {
+    return select.searchAid({
+      query: state.q,
+      type: state.type,
+      organizationId: state.organizationId,
+      familyId: state.familyId,
+      scope: select.scopeFilter(session),
+    });
+  }
+
+  const rows = await getCampAidDistributions(session.campId);
+  return rows
+    .map((row) => ({ ...row, campName: session.campLabel }))
+    .filter((row) =>
+      select.matchesAidFilters(row, {
+        query: state.q,
+        type: state.type,
+        organizationId: state.organizationId,
+        familyId: state.familyId,
+      })
+    );
 }
 
 /* ---- Excel export --------------------------------------------------------- */

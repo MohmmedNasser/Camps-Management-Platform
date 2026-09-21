@@ -16,6 +16,20 @@ export async function listOrganizations({ search, page, pageSize, sortBy, sortDi
   return { rows: data, total: count };
 }
 
+/**
+ * `{value, label}` options for the real Camp Admin aid donor dropdown
+ * (Phase 4.6). Unpaginated — organisations are a small, platform-wide list
+ * (not camp-scoped), and `listOrganizations()`'s default page size would
+ * silently truncate it. `value` is the organisation's UUID; the mock
+ * `select.organizationOptions()` this replaces uses ids like `'org-1'` that
+ * never match a real row.
+ */
+export async function listOrganizationOptions() {
+  const client = requireClient();
+  const rows = await run(client.from('organizations').select('id, name').order('name', { ascending: true }));
+  return rows.map((org) => ({ value: org.id, label: org.name }));
+}
+
 export async function getOrganization(id) {
   const client = requireClient();
   return run(client.from('organizations').select('*').eq('id', id).single());

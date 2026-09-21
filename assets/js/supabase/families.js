@@ -207,6 +207,37 @@ export async function createFamilyWithMembers({ campId, head, members = [], note
   return { id, referenceCode };
 }
 
+/**
+ * `{value, label, referenceCode}` options for the real Camp Admin aid
+ * beneficiary multi-select (Phase 4.6). `value` is the family's UUID, not
+ * its `reference_code`: `create_aid_distribution`/`updateAidDistribution()`'s
+ * `p_family_ids`/`familyIds` are `uuid[]`, and `getCampFamilies()` above
+ * discards the UUID entirely (it keys its own rows on `reference_code`
+ * instead) — this is a separate, narrower query rather than a reshape of
+ * that one, same convention as `family-members.js`'s `getDisplacedPerson()`
+ * being separate from `listFamilyMembers()`. `referenceCode` is kept
+ * alongside `value` because every existing caller that deep-links here
+ * (`families.js`, `family-details.js`, `displaced-details.js`) hands over a
+ * family's human-readable id (`row.id`/`family.id`/`person.familyId`, all
+ * `reference_code` under real data), never its UUID.
+ */
+export async function getCampFamilyOptions(campId) {
+  const client = requireClient();
+  const rows = await run(
+    client
+      .from('families')
+      .select('id, reference_code, head:family_members!families_head_member_id_fkey(full_name)')
+      .eq('camp_id', campId)
+  );
+  return rows
+    .map((family) => ({
+      value: family.id,
+      referenceCode: family.reference_code,
+      label: `${family.reference_code} — ${family.head?.full_name || 'بدون رب أسرة'}`,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
+}
+
 export async function updateFamily(id, patch) {
   const client = requireClient();
   const allowed = ['notes', 'head_member_id'];

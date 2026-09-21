@@ -1,30 +1,50 @@
 /**
- * Register an aid delivery (Camp Admin only).
+ * Register an aid delivery (Camp Admin only, real Supabase data — Phase 4.6).
  *
- * Accepts `?familyId=` / `?displacedId=` so the family and aid pages can hand
- * over a pre-selected beneficiary.
+ * Accepts `?familyId=` so `families.js`/`family-details.js`/
+ * `displaced-details.js` can hand over a pre-selected beneficiary. Every one
+ * of those callers passes the family's human-readable `reference_code`
+ * (`FAM-000001`), not its UUID — matched against `families[].referenceCode`
+ * below, while the multi-select itself still runs on the UUID `value` the
+ * create RPC needs.
  */
 
 import { qs, params } from '../utils/dom.js';
 import { toInputDate } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
-import { button, alert, breadcrumb, pageHeader, emptyState } from '../ui/components.js';
+import { button, alert, breadcrumb, pageHeader, emptyState, skeletonForm } from '../ui/components.js';
 import { bindForm } from '../ui/form.js';
 import { aidFields, aidSchema, familyCountLabel } from '../ui/record-forms.js';
 import { initMultiSelect } from '../ui/combobox.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
-import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import { createAidDistribution } from '../supabase/aids.js';
+import { getCampFamilyOptions } from '../supabase/families.js';
+import { listOrganizationOptions } from '../supabase/organizations.js';
 
 const shell = await mountShell({ active: 'aid.html', title: 'إضافة مساعدة' });
 if (shell) init(shell);
 
-function init({ session, content }) {
+async function init({ session, content }) {
+  content.innerHTML = skeletonForm(4);
+
+  // select.organizationOptions()/select.familyOptions() read the mock store
+  // and never match a real authenticated Camp Admin's ids (Phase 4.6 live-
+  // schema finding, same trap Phase 4.4's family-create.js flagged for
+  // select.campOptions()) — this page is Camp-Admin-only, so both option
+  // lists come from the real, camp-scoped data-access layer instead.
+  const [organizations, families] = await Promise.all([
+    listOrganizationOptions(),
+    getCampFamilyOptions(session.campId),
+  ]);
+
+  render({ session, content, organizations, families });
+}
+
+function render({ session, content, organizations, families }) {
   const query = params();
-  const organizations = select.organizationOptions();
-  const families = select.familyOptions(session.campId);
-  const familyId = query.familyId && families.some((f) => f.value === query.familyId) ? query.familyId : '';
+  const preselected = query.familyId ? families.find((f) => f.referenceCode === query.familyId) : null;
+  const familyId = preselected ? preselected.value : '';
 
   if (!families.length || !organizations.length) {
     content.innerHTML = `
@@ -78,53 +98,41 @@ function init({ session, content }) {
   const form = qs('#aid-form', content);
   initMultiSelect(form, {
     name: 'familyIds',
-    search: (query) => select.searchFamilyOptions(families, query),
+    search: (query) => searchOptions(families, query),
     selectAllSource: () => families,
     countLabel: familyCountLabel,
   });
 
   bindForm(form, {
     schema: aidSchema(),
-    onSubmit: (values) => {
+    onSubmit: async (values) => {
       const familyIds = Array.isArray(values.familyIds) ? values.familyIds : [];
       const eligibleFamilyIds = new Set(families.map((f) => f.value));
       const allFamiliesSelected =
         eligibleFamilyIds.size > 0 && familyIds.length === eligibleFamilyIds.size;
-      const record = store.aid.create({
-        organizationId: values.organizationId,
-        types: values.types,
-        familyIds,
-        allFamiliesSelected,
-        campId: session.campId,
-        date: values.date,
-        createdBy: session.id,
-        createdAt: new Date().toISOString(),
-      });
 
-      notifyFamilies(record);
-      toast.success('تم الحفظ', 'تم تسجيل المساعدة في سجل الأسر المستفيدة.');
-      go('aid-details.html', { id: record.id });
+      try {
+        const id = await createAidDistribution({
+          organizationId: values.organizationId,
+          campId: session.campId,
+          distributedOn: values.date,
+          aidTypeCodes: values.types,
+          familyIds,
+          allFamiliesSelected,
+        });
+        toast.success('تم الحفظ', 'تم تسجيل المساعدة في سجل الأسر المستفيدة.');
+        go('aid-details.html', { id });
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الحفظ', 'حدث خطأ أثناء الحفظ، حاول مرة أخرى.');
+      }
     },
   });
 }
 
-/** Every family named as a beneficiary is notified, not one nominated recipient. */
-function notifyFamilies(record) {
-  const memberIds = new Set(
-    record.familyIds.flatMap((familyId) => select.familyMembers(familyId).map((member) => member.id))
-  );
-  const typeLabels = record.types.map(select.aidTypeLabel).join('، ');
-  store.users
-    .list((row) => row.displacedId && memberIds.has(row.displacedId))
-    .forEach((user) => {
-      store.notifications.create({
-        userId: user.id,
-        type: 'info',
-        title: 'تمت إضافة مساعدة جديدة لأسرتك',
-        text: `${typeLabels} من ${select.organizationName(record.organizationId)}.`,
-        createdAt: new Date().toISOString(),
-        read: false,
-        href: 'aid.html',
-      });
-    });
+/** Matches the mock's `select.searchFamilyOptions()` — a plain label substring match. */
+function searchOptions(options, query = '') {
+  const term = query.trim().toLowerCase();
+  if (!term) return options;
+  return options.filter((option) => option.label.toLowerCase().includes(term));
 }
