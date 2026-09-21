@@ -39,8 +39,13 @@ import { pageUrl, go } from '../core/router.js';
 import { can, inScope } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
+import { getDisplacedPerson, removeFamilyMember } from '../supabase/family-members.js';
+import { getFamilyByReferenceCode } from '../supabase/families.js';
+import { getFamilyAidHistory } from '../supabase/aids.js';
+import { listDocuments } from '../supabase/documents.js';
 import {
   labelOf,
+  ROLES,
   GENDERS,
   MARITAL_STATUSES,
   NATIONALITIES,
@@ -49,6 +54,7 @@ import {
   WORK_STATUSES,
   INCOME_SOURCES,
   RELATIONSHIPS,
+  DOCUMENT_CATEGORIES,
 } from '../core/config.js';
 
 const shell = await mountShell({ active: 'displaced.html', title: 'بيانات النازح' });
@@ -61,16 +67,16 @@ async function init({ session, content }) {
   content.innerHTML = loadingView();
 
   try {
-    const data = await store.load(() => collect(id));
+    const data = await store.load(() => collect(id, session));
 
-    if (!data.person || !inScope(data.person, session)) {
+    if (!data.person || (session.role !== ROLES.CAMP_ADMIN && !inScope(data.person, session))) {
       content.innerHTML = notFoundView();
       return;
     }
 
     content.innerHTML = view(data);
     initTabs(content);
-    wire(content, data);
+    wire(content, session, data);
   } catch (error) {
     console.error(error);
     content.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -78,7 +84,9 @@ async function init({ session, content }) {
   }
 }
 
-function collect(id) {
+function collect(id, session) {
+  if (session.role === ROLES.CAMP_ADMIN) return collectReal(id, session);
+
   const person = store.displaced.get(id);
   if (!person) return { person: null };
   return {
@@ -90,6 +98,53 @@ function collect(id) {
       .list((row) => row.displacedId === id)
       .map(select.documentRow),
     campName: select.campName(person.campId),
+  };
+}
+
+/**
+ * `person.campId !== session.campId` is redundant, UX-only narrowing — RLS
+ * on `family_members` already prevents `getDisplacedPerson()` from
+ * returning another camp's row at all (Phase 4.5 spec §1/§5.2). It only
+ * picks the not-found copy for a same-camp id that genuinely doesn't
+ * exist; it is not, and is not needed as, a security check.
+ */
+async function collectReal(id, session) {
+  const person = await getDisplacedPerson(id);
+  if (!person || person.campId !== session.campId) return { person: null };
+
+  const family = person.familyId ? await getFamilyByReferenceCode(person.familyId) : null;
+  const [aidRows, docsResult] = await Promise.all([
+    family ? getFamilyAidHistory(family._dbId) : Promise.resolve([]),
+    listDocuments({ familyMemberId: id }),
+  ]);
+
+  return {
+    person,
+    family: family ? { ...family, campName: session.campLabel } : null,
+    aid: aidRows.map(mapAidHistoryRow),
+    documents: docsResult.rows.map(mapDocumentRow),
+    campName: session.campLabel,
+  };
+}
+
+function mapAidHistoryRow(row) {
+  const d = row.distribution;
+  const labels = (d.aid_distribution_types || []).map((t) => t.aid_type?.label_ar).filter(Boolean);
+  return {
+    id: d.id,
+    typeLabels: labels.join('، '),
+    organizationName: d.organization?.name || '—',
+    date: d.distributed_on,
+  };
+}
+
+function mapDocumentRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    size: row.file_size,
+    categoryLabel: labelOf(DOCUMENT_CATEGORIES, row.category),
+    uploadedAt: row.created_at,
   };
 }
 
@@ -390,7 +445,7 @@ function view(data) {
     </section>`;
 }
 
-function wire(content, { person }) {
+function wire(content, session, { person }) {
   delegate(content, 'click', '[data-delete]', async () => {
     const ok = await confirmDialog({
       title: 'حذف سجل النازح',
@@ -398,6 +453,19 @@ function wire(content, { person }) {
       confirmLabel: 'حذف نهائي',
     });
     if (!ok) return;
+
+    if (session.role === ROLES.CAMP_ADMIN) {
+      try {
+        await removeFamilyMember(person.id);
+        toast.success('تم الحذف', 'تم حذف سجل النازح.');
+        go('displaced.html');
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
+      }
+      return;
+    }
+
     select.removeDisplaced(person.id);
     toast.success('تم الحذف', 'تم حذف سجل النازح.');
     go('displaced.html');

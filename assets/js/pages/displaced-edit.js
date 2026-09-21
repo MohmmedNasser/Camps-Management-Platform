@@ -28,6 +28,8 @@ import { pageUrl, go } from '../core/router.js';
 import { inScope, can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
+import { ROLES } from '../core/config.js';
+import { getDisplacedPerson, updateFamilyMember, removeFamilyMember, toFamilyMemberPayload, isDuplicateNationalId } from '../supabase/family-members.js';
 
 const shell = await mountShell({ active: 'displaced.html', title: 'تعديل بيانات نازح' });
 if (shell) init(shell);
@@ -37,9 +39,10 @@ async function init({ session, content }) {
   content.innerHTML = skeletonForm(8);
 
   try {
-    const person = await store.load(() => store.displaced.get(id));
+    const person =
+      session.role === ROLES.CAMP_ADMIN ? await loadReal(id, session) : await store.load(() => store.displaced.get(id));
 
-    if (!person || !inScope(person, session)) {
+    if (!person || (session.role !== ROLES.CAMP_ADMIN && !inScope(person, session))) {
       content.innerHTML = emptyState({
         iconName: 'alertTriangle',
         title: 'سجل النازح غير موجود',
@@ -49,13 +52,109 @@ async function init({ session, content }) {
       return;
     }
 
-    render({ session, content, person });
+    if (session.role === ROLES.CAMP_ADMIN) renderReal({ session, content, person });
+    else render({ session, content, person });
   } catch (error) {
     console.error(error);
     content.innerHTML = errorState({ retryAttrs: 'data-retry' });
     delegate(content, 'click', '[data-retry]', () => init({ session, content }));
   }
 }
+
+/**
+ * `person.campId !== session.campId` is redundant, UX-only narrowing — RLS
+ * on `family_members` already prevents `getDisplacedPerson()` from
+ * returning another camp's row at all (Phase 4.5 spec §1/§5.2).
+ */
+async function loadReal(id, session) {
+  const person = await getDisplacedPerson(id);
+  if (!person || person.campId !== session.campId) return null;
+  return person;
+}
+
+/* ---- Real Camp Admin path --------------------------------------------------
+ * Family reassignment is not exposed here (`showFamily: false`): the only
+ * server-side head-repair trigger, `family_members_promote_head`, fires
+ * `AFTER DELETE`, not on a family_id reassignment via UPDATE — confirmed
+ * live (Phase 4.5 spec §1). Reassigning a family's head to a different
+ * family here would leave the old family's `head_member_id` dangling with
+ * no automatic repair, so the field stays out of the real edit form; every
+ * other field remains editable. */
+
+function renderReal({ session, content, person }) {
+  const camps = [{ value: session.campId, label: session.campLabel }];
+
+  content.innerHTML = `
+    ${breadcrumb([
+      { label: 'النازحون', href: pageUrl('displaced.html') },
+      { label: person.fullName, href: pageUrl('displaced-details.html', { id: person.id }) },
+      { label: 'تعديل' },
+    ])}
+    ${pageHeader({
+      title: 'تعديل بيانات النازح',
+      description: 'التعديلات تُحفظ فور الضغط على زر الحفظ. لا يمكن تغيير الأسرة من هذه الصفحة.',
+      actions: can('displaced:delete')
+        ? button({ label: 'حذف السجل', variant: 'danger', iconName: 'trash', attrs: 'data-delete' })
+        : '',
+    })}
+    ${formSummary([person.fullName, person.nationalId, person.familyId])}
+
+    <form class="form" id="displaced-form" novalidate>
+      ${displacedFields(person, { camps, lockCamp: true, showFamily: false })}
+      <div class="form-actions">
+        ${button({
+          label: 'إلغاء',
+          variant: 'secondary',
+          href: pageUrl('displaced-details.html', { id: person.id }),
+        })}
+        ${button({ label: 'حفظ التعديلات', variant: 'primary', iconName: 'check', type: 'submit' })}
+      </div>
+    </form>`;
+
+  const form = qs('#displaced-form', content);
+  bindMaternityFields(form);
+
+  const campSelect = qs('#campId', form);
+  if (campSelect && campSelect.disabled) campSelect.value = person.campId;
+
+  bindForm(form, {
+    schema: displacedSchema(),
+    onSubmit: async (values) => {
+      try {
+        await updateFamilyMember(person.id, toFamilyMemberPayload(values));
+        toast.success('تم الحفظ', `تم تحديث بيانات ${values.fullName}.`);
+        go('displaced-details.html', { id: person.id });
+      } catch (error) {
+        if (isDuplicateNationalId(error)) {
+          setFieldError(form, 'nationalId', 'رقم الهوية مسجّل لنازح آخر.');
+          toast.error('تعذر الحفظ', 'رقم الهوية مسجّل لنازح آخر.');
+          return;
+        }
+        console.error(error);
+        toast.error('تعذر الحفظ', 'حدث خطأ أثناء الحفظ، حاول مرة أخرى.');
+      }
+    },
+  });
+
+  delegate(content, 'click', '[data-delete]', async () => {
+    const ok = await confirmDialog({
+      title: 'حذف سجل النازح',
+      text: `سيتم حذف "${person.fullName}" وكل ما يرتبط به من مساعدات ومستندات. لا يمكن التراجع عن هذه العملية.`,
+      confirmLabel: 'حذف نهائي',
+    });
+    if (!ok) return;
+    try {
+      await removeFamilyMember(person.id);
+      toast.success('تم الحذف', 'تم حذف سجل النازح.');
+      go('displaced.html');
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
+    }
+  });
+}
+
+/* ---- Mock path (Super Admin) — unchanged ---------------------------------- */
 
 function render({ session, content, person }) {
   const camps = select.campOptions(session);

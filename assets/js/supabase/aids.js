@@ -63,6 +63,40 @@ export async function getFamilyAidHistory(familyId) {
   );
 }
 
+/**
+ * Family reference codes with at least one distribution matching the
+ * active aid-type/donor filter, for the real Camp Admin displaced-list
+ * page (Phase 4.5 spec §4 item 4/§5.1). `listAidDistributions()` above
+ * cannot be reused directly — it paginates at `DEFAULT_PAGE_SIZE` (20),
+ * which would silently truncate the filter's family set. Rooted at
+ * `aid_distributions` and using the same nested-embed filter shape
+ * `listAidDistributions()` already relies on
+ * (`aid_distribution_types.aid_type.code`) rather than a deeper,
+ * unproven nesting through the junction table.
+ */
+export async function getFamilyIdsForAidFilter(campId, { aidTypeCode = '', organizationId = '' } = {}) {
+  const client = requireClient();
+  const typesRel = aidTypeCode
+    ? 'aid_distribution_types!inner(aid_type:aid_types!inner(code))'
+    : 'aid_distribution_types(aid_type:aid_types(code))';
+  let query = client
+    .from('aid_distributions')
+    .select(`camp_id, ${typesRel}, aid_distribution_families(family:families(reference_code))`)
+    .eq('camp_id', campId);
+  if (organizationId) query = query.eq('organization_id', organizationId);
+  if (aidTypeCode) query = query.eq('aid_distribution_types.aid_type.code', aidTypeCode);
+
+  const rows = await run(query);
+  const ids = new Set();
+  rows.forEach((row) =>
+    (row.aid_distribution_families || []).forEach((link) => {
+      const code = link.family?.reference_code;
+      if (code) ids.add(code);
+    })
+  );
+  return ids;
+}
+
 export async function createAidDistribution({
   organizationId,
   campId,

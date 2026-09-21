@@ -42,6 +42,8 @@ import { pageUrl } from "../core/router.js";
 import { can } from "../core/auth.js";
 import * as store from "../core/store.js";
 import * as select from "../core/selectors.js";
+import { getCampDisplacedPersons, removeFamilyMember } from "../supabase/family-members.js";
+import { getFamilyIdsForAidFilter } from "../supabase/aids.js";
 import { DISPLACED_COLUMNS, displacedExportRow } from "../core/exports.js";
 import { exportSheet, timestampedName } from "../utils/xlsx.js";
 import {
@@ -272,8 +274,7 @@ function init({ session, content }) {
         // Live count for the values staged inside the sheet, read through the
         // exact same query the table and export use — nothing bespoke here.
         onPreview: (staged) =>
-            select.getFilteredDisplaced(session, { query: state.q, ...staged })
-                .length,
+            collect(session, { query: state.q, ...staged }).then((rows) => rows.length),
     });
 
     delegate(content, "click", "[data-page]", (event, node) => {
@@ -312,6 +313,19 @@ function init({ session, content }) {
             confirmLabel: "حذف نهائي",
         });
         if (!ok) return;
+
+        if (session.role === ROLES.CAMP_ADMIN) {
+            try {
+                await removeFamilyMember(node.dataset.delete);
+                toast.success("تم الحذف", "تم حذف سجل النازح.");
+                load(session);
+            } catch (error) {
+                console.error(error);
+                toast.error("تعذر الحذف", "قد لا تملك صلاحية حذف هذا السجل.");
+            }
+            return;
+        }
+
         select.removeDisplaced(node.dataset.delete);
         toast.success("تم الحذف", "تم حذف سجل النازح.");
         load(session);
@@ -340,12 +354,25 @@ function init({ session, content }) {
 
 /* ---- Data + rendering ----------------------------------------------------- */
 
-/** The single query behind the table, the count and the export. */
-function collect(session) {
-    return select.getFilteredDisplaced(session, {
-        query: state.q,
-        ...filterValues(),
-    });
+/**
+ * The single query behind the table, the count and the export. `filters`
+ * defaults to the currently-applied state, but the filter sheet's live
+ * preview passes the still-staged (not yet applied) values explicitly.
+ */
+async function collect(session, filters = { query: state.q, ...filterValues() }) {
+    if (session.role !== ROLES.CAMP_ADMIN) {
+        return select.getFilteredDisplaced(session, filters);
+    }
+
+    const rows = await getCampDisplacedPersons(session.campId);
+    const aidFamilyIds =
+        filters.aidType || filters.organizationId
+            ? await getFamilyIdsForAidFilter(session.campId, {
+                  aidTypeCode: filters.aidType,
+                  organizationId: filters.organizationId,
+              })
+            : null;
+    return rows.filter((row) => select.matchesDisplacedFilters(row, filters, { aidFamilyIds }));
 }
 
 async function load(session) {

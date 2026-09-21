@@ -187,9 +187,12 @@ export function openFilterSheet({ filters, onApply, onPreview = null }) {
     Object.fromEntries(selects().map((select) => [select.name, select.value]));
 
   const preview = qs('[data-preview]', root);
-  const refresh = debounce(() => {
+  // `await` on a plain number resolves immediately, so this stays correct
+  // for a synchronous onPreview (mock data) while also supporting one that
+  // returns a Promise (a real, camp-scoped Supabase query — Phase 4.5).
+  const refresh = debounce(async () => {
     if (!preview || !onPreview) return;
-    const count = onPreview(values());
+    const count = await onPreview(values());
     preview.textContent = count === 0 ? 'لا توجد نتائج مطابقة' : `ستظهر ${count} نتيجة`;
     preview.dataset.empty = String(count === 0);
   }, 150);

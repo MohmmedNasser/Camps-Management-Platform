@@ -25,7 +25,7 @@ import {
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import { createFamilyWithMembers } from '../supabase/families.js';
-import { isDuplicateNationalId } from '../supabase/family-members.js';
+import { isDuplicateNationalId, toFamilyMemberPayload } from '../supabase/family-members.js';
 
 const shell = await mountShell({ active: 'families.html', title: 'إضافة أسرة' });
 if (shell) init(shell);
@@ -122,46 +122,6 @@ function init({ session, content }) {
 
   /* ---- Submit ----------------------------------------------------------- */
 
-  /**
-   * camelCase form values -> the snake_case jsonb keys
-   * create_family_with_members's insert_family_member reads (Phase 4.4
-   * spec §1/§5.3). Covers both the head object (session values, all
-   * fields present) and each readMember() block (a smaller subset —
-   * the rest inherit from the head server-side).
-   */
-  const toMemberPayload = (values, overrides = {}) => ({
-    full_name: values.fullName.trim(),
-    full_name_en: (values.fullNameEn || '').trim(),
-    national_id: values.nationalId.trim(),
-    gender: values.gender,
-    birth_date: values.birthDate,
-    marital_status: values.maritalStatus,
-    nationality: values.nationality || 'palestinian',
-    passport_number: (values.passportNumber || '').trim(),
-    unrwa_number: (values.unrwaNumber || '').trim(),
-    phone: (values.phone || '').trim(),
-    alt_phone: (values.altPhone || '').trim(),
-    email: (values.email || '').trim(),
-    governorate: values.governorate,
-    city: values.city,
-    area: values.area,
-    tent_type: values.tentType,
-    origin_governorate: values.originGovernorate,
-    origin_city: values.originCity,
-    displacement_date: values.displacementDate,
-    chronic_diseases: (values.chronicDiseases || '').trim(),
-    disability: (values.disability || '').trim(),
-    father_status: values.fatherStatus || 'alive',
-    mother_status: values.motherStatus || 'alive',
-    is_pregnant: values.isPregnant ?? null,
-    is_breastfeeding: values.isBreastfeeding ?? null,
-    work_status: values.workStatus,
-    income_source: values.incomeSource,
-    monthly_income: Number(values.monthlyIncome || 0),
-    relationship: 'member',
-    ...overrides,
-  });
-
   bindForm(form, {
     schema,
     onSubmit: async (values) => {
@@ -173,11 +133,11 @@ function init({ session, content }) {
         const result = await createFamilyWithMembers({
           campId,
           notes: (values.notes || '').trim(),
-          head: toMemberPayload(
+          head: toFamilyMemberPayload(
             { ...values, isPregnant: maternity.isPregnant, isBreastfeeding: maternity.isBreastfeeding },
             { relationship: 'head', status: 'approved' }
           ),
-          members: blocks.map((index) => toMemberPayload(readMember(values, index))),
+          members: blocks.map((index) => toFamilyMemberPayload(readMember(values, index))),
         });
         toast.success('تم الإنشاء', `تم إنشاء الأسرة ${result.referenceCode} مع ${memberCount + 1} من الأفراد.`);
         go('family-details.html', { id: result.referenceCode });

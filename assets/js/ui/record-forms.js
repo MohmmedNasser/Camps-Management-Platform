@@ -812,9 +812,13 @@ export function messageFields(values = {}) {
  * field cannot silently lose its validation.
  *
  * `isDuplicateId` lets the page plug in the store-backed uniqueness check
- * without this module reaching for data itself.
+ * without this module reaching for data itself. `requireFamily` is opt-in
+ * (default false, matching the mock's optional "بدون أسرة" choice) — the
+ * real Camp Admin create/edit path passes `true` because
+ * `family_members.family_id` is `NOT NULL` in the live schema (Phase 4.5
+ * spec §1); the mock/Super-Admin path is unaffected.
  */
-export function displacedSchema({ isDuplicateId = () => false } = {}) {
+export function displacedSchema({ isDuplicateId = () => false, requireFamily = false } = {}) {
   return {
     fullName: [rules.required('الاسم الكامل'), rules.minLength(6, 'الاسم الكامل')],
     nationalId: [
@@ -834,6 +838,7 @@ export function displacedSchema({ isDuplicateId = () => false } = {}) {
     tentType: [rules.required('نوع الخيمة')],
     displacementDate: [rules.pastDate('تاريخ النزوح')],
     monthlyIncome: [rules.number({ min: 0, label: 'الدخل الشهري' })],
+    ...(requireFamily ? { familyId: [rules.required('الأسرة')] } : {}),
   };
 }
 

@@ -851,3 +851,87 @@ extracted so the real Camp Admin list path and the still-mock
   assertions finish, so repeated runs never push a camp's family count
   past `PAGE_SIZE` and break the unfiltered-list assertions.
 - No `service_role` key or other private credential reaches the browser.
+
+---
+
+## 21 · Phase 4.5 — Camp Admin displaced persons on real data
+
+`assets/js/pages/displaced.js`, `displaced-create.js`, `displaced-details.js`
+and `displaced-edit.js` now read/write real data for the `camp_admin` role
+only. `family_members` **is** the displaced-person table (§2) — there is no
+separate table, so this phase adds `getCampDisplacedPersons(campId)` and
+`getDisplacedPerson(id)` to `assets/js/supabase/family-members.js`, reuses
+the Phase 2 `addFamilyMember()`/`updateFamilyMember()`/`removeFamilyMember()`
+(none had a caller before this phase), and adds `getFamilyIdsForAidFilter()`
+to `aids.js` for the list's aid-type/donor filters.
+
+- **`family_members.family_id` is `NOT NULL`** — the real schema cannot
+  represent a displaced person without a family. CLAUDE.md domain rule 13
+  already documented this ("`displaced-create.html` exists only for adding
+  a person to a family that already exists"); the real Camp Admin create
+  path now enforces it (a required family picker, sourced from
+  `getCampFamilies()`), while the mock/Super-Admin path's optional
+  "بدون أسرة" choice is untouched.
+- **Family reassignment is not exposed on the real edit path.** The only
+  server-side head-repair trigger, `family_members_promote_head`, fires
+  `AFTER DELETE` only — confirmed live via `pg_trigger` — not on a
+  `family_id` reassignment through `UPDATE`. Reassigning a family's head to
+  a different family there would leave the old family's `head_member_id`
+  dangling with no automatic repair, so `displaced-edit.js`'s real branch
+  renders `displacedFields()` with `showFamily: false`; every other field
+  stays editable.
+- **`matchesDisplacedFilters()`** (`core/selectors.js`) is a new,
+  independent function, not an extraction of the mock's
+  `getFilteredDisplaced()`/`searchDisplaced()` (which are unmodified) —
+  unlike Phase 4.4's family-filter extraction, there was no existing
+  automated regression suite for the mock's displaced filters to lean on,
+  so the two paths were kept structurally separate and proven equivalent
+  by the DB-vs-UI suite instead of by shared code.
+- **A real, pre-existing bug was found and fixed during this phase's
+  extraction of `toFamilyMemberPayload()`** (moved from `family-create.js`'s
+  local `toMemberPayload()`, predicted by the Phase 4.4 spec): the original
+  mapper hardcoded `relationship: 'member'` for every non-head member —
+  `'member'` is not a value of the `family_relationship` enum. This never
+  surfaced because Phase 4.4's own creation test only ever submitted a
+  head-only family. Fixed to read the form's actual chosen relationship.
+- **A second real bug was found and fixed, specific to the update path**:
+  `insert_family_member`'s SQL wraps nearly every optional field in
+  `nullif(p_data ->> 'x', '')` before casting, so an empty form field
+  becomes SQL `NULL` for the create path (through the RPC). The edit path's
+  `updateFamilyMember()` is a plain `.update()` with no RPC and therefore no
+  such normalization — an empty `email`/`alt_phone` (regex `CHECK`
+  constraints) or `governorate`/`origin_governorate` (enum columns) sent as
+  literal empty strings 400s directly against Postgres. Caught live while
+  verifying the create→edit flow end-to-end, not by inspection. Fixed by
+  mirroring the RPC's own `nullif` behavior inside `toFamilyMemberPayload()`
+  (empty optional fields become `null`; the two `NOT NULL DEFAULT ''`
+  columns, `chronic_diseases`/`disability`, are deliberately left as
+  empty strings, matching `insert_family_member`'s own `coalesce(..., '')`
+  rather than its `nullif`).
+- `ui/toolbar.js`'s filter-sheet live preview (`onPreview`) is made
+  `await`-compatible (a one-line change) so the real, async Camp Admin
+  query can back the "ستظهر N نتيجة" count exactly like the mock's
+  synchronous one already did — a no-op for every other page's still-
+  synchronous `onPreview`.
+- Super Admin's displaced list/detail and the displaced person's own
+  dashboard/profile are unchanged.
+- No backend change of any kind — no table, column, view, RPC, trigger,
+  RLS policy or migration was added or modified.
+- Verified with two new suites:
+  `supabase/tests/phase4.5-camp-isolation.test.mjs` (two active seeded
+  Camp Admin accounts, each proving RLS returns only their own camp's
+  `family_members`, another camp's `displaced-details` renders not-found, a
+  raw-client delete/update against another camp's person affects zero
+  rows, `add_family_member` into another camp's family is rejected with
+  `42501`, and the rendered list/export never contain another camp's
+  national IDs) and `supabase/tests/phase4.5-displaced-verification.test.mjs`
+  (the rendered list across every page — the list paginates at
+  `PAGE_SIZE=10` and this project's seed plus prior test runs exceed that
+  for at least one camp, so the suite walks every page rather than assuming
+  everything fits on page one — every filter, the Excel export,
+  displaced-details, a real end-to-end create *and* edit with a DB-level
+  assertion that `family_id`/`camp_id` are unchanged by the edit, a real
+  delete, and an empty-result case, each compared against independent
+  queries against the same live database). Both new suites' created rows
+  are deleted once their assertions finish.
+- No `service_role` key or other private credential reaches the browser.

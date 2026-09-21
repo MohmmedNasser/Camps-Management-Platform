@@ -253,6 +253,73 @@ export function matchesFamilyFilters(family, filters = {}) {
 }
 
 /**
+ * Whether one displaced-person row (mock `displacedRow()` shape, or the
+ * equivalent real-data shape from `getCampDisplacedPersons()`) matches a
+ * search term and every active filter — Phase 4.5's real Camp Admin path.
+ *
+ * Deliberately NOT an extraction of `getFilteredDisplaced()`/
+ * `searchDisplaced()` below: those two mock functions handle campId/scope
+ * through a `scopeFilter()` predicate the real path doesn't need (RLS
+ * already scopes it), and there is no existing automated regression suite
+ * for the mock's displaced filters the way families had — see Phase 4.5
+ * spec §4 item 6. This re-implements the identical semantics field-by-field
+ * and is verified against real data by the DB-vs-UI suite instead.
+ *
+ * `aidFamilyIds`, when the aid-type/donor filter is active, is a Set of
+ * family reference codes known to have received a matching distribution
+ * (`getFamilyIdsForAidFilter()`).
+ */
+export function matchesDisplacedFilters(person, filters = {}, { aidFamilyIds = null } = {}) {
+  const {
+    query = '',
+    gender = '',
+    status = '',
+    tentType = '',
+    ageBand = '',
+    isChild: childFilter = '',
+    isOrphan: orphanFilter = '',
+    hasChronic: chronicFilter = '',
+    isPregnant: pregnantFilter = '',
+    isBreastfeeding: breastfeedingFilter = '',
+    aidType = '',
+    organizationId = '',
+  } = filters;
+
+  if (gender && person.gender !== gender) return false;
+  if (status && person.status !== status) return false;
+  if (tentType && person.tentType !== tentType) return false;
+  if ((aidType || organizationId) && !(aidFamilyIds && aidFamilyIds.has(person.familyId))) return false;
+
+  const facts = personFacts(person);
+  const band = AGE_BANDS.find((entry) => entry.value === ageBand);
+  if (band && !isUnder(person, band.max)) return false;
+  if (!matchesYesNo(childFilter, facts.isChild)) return false;
+  if (!matchesYesNo(orphanFilter, facts.isOrphan)) return false;
+  if (!matchesYesNo(chronicFilter, facts.hasChronic)) return false;
+
+  // Maternity filters never apply to a male record: "غير حامل" must not
+  // return every man in the camp.
+  if (pregnantFilter) {
+    if (!facts.maternityApplies) return false;
+    if (!matchesYesNo(pregnantFilter, facts.isPregnant)) return false;
+  }
+  if (breastfeedingFilter) {
+    if (!facts.maternityApplies) return false;
+    if (!matchesYesNo(breastfeedingFilter, facts.isBreastfeeding)) return false;
+  }
+
+  const term = query.trim().toLowerCase();
+  if (!term) return true;
+  return (
+    person.fullName.toLowerCase().includes(term) ||
+    (person.fullNameEn || '').toLowerCase().includes(term) ||
+    (person.nationalId || '').includes(term) ||
+    (person.phone || '').includes(term) ||
+    (person.familyId || '').toLowerCase().includes(term)
+  );
+}
+
+/**
  * Families matching a search term AND every active filter.
  *
  * A family matches a member-characteristic filter when **at least one** of its
