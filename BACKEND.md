@@ -1184,3 +1184,95 @@ feature.
   fixtures are deleted in `finally`, verified live to leave zero debris —
   the discipline the Phase 3 suite itself now also follows.
 - No `service_role` key or other private credential reaches the browser.
+
+---
+
+## 25 · Phase 4.9 — Donor organizations on real data
+
+`assets/js/pages/organizations.js` now reads/writes real data for **both**
+roles in its `PAGE_ACCESS` (`camp_admin`, `super_admin`) — the first
+Phase 4.x page with no mock branch left behind at all, because
+`organizations` has no `camp_id` column and RLS grants the two roles
+identical full CRUD (confirmed live: `organizations_insert_admin`/
+`_update_admin`/`_delete_admin` all read `is_super_admin() OR
+is_camp_admin()`, no camp predicate anywhere — the simplest RLS shape of
+any table wired so far).
+
+- **Source:** a new `listOrganizationsWithUsage()` in
+  `assets/js/supabase/organizations.js`, embedding
+  `aid_distributions(id, aid_distribution_families(family_id))` — both
+  real FKs, so this needed no view-based workaround. Unpaginated, same
+  "fetch all" convention `listOrganizationOptions()` (Phase 4.6) already
+  established for this small, platform-wide table. Client-side search via
+  the new pure `selectors.matchesOrganizationFilters()`, same convention
+  as `matchesAidFilters()`/`matchesDocumentFilters()`/
+  `matchesRegistrationRequestFilters()`.
+- **No camp scoping, anywhere.** `listOrganizationsWithUsage()` takes no
+  camp/role argument — there is nothing to spoof and no camp-isolation
+  test category applies. `supabase/tests/phase4.9-role-authorization.test.mjs`
+  proves the *role* boundary instead: `super_admin`/`camp_admin` get full
+  RLS-backed CRUD; `displaced` can `SELECT` (RLS intentionally allows it —
+  donor names aren't sensitive data, and `organizations.html` simply isn't
+  in that role's `PAGE_ACCESS`) but every write is rejected `42501`;
+  anonymous gets nothing; the route guard independently redirects a
+  displaced session to `404.html`.
+- **Per-row `aidCount`/`familiesCount` are RLS-scoped, not platform-wide —
+  a deliberate, documented behavior change from the old mock's single
+  shared store.** A Camp Admin viewing a donor used across multiple camps
+  sees only their own camp's usage of it, because the nested
+  `aid_distributions` embed is independently subject to that table's own
+  camp-scoped RLS. Confirmed live and pinned by a real test case: donor
+  "الهلال الأحمر الفلسطيني" has 4 distributions platform-wide but only 2
+  in مخيم النور — `admin@camps.ps` sees `2`, `super@camps.ps` sees `4`.
+- **Two real, previously-latent bugs found and fixed, both in the
+  pre-existing Phase 2 `createOrganization`/`updateOrganization` (never
+  had a real caller before this phase).** (1) Sending `phone: ''`/
+  `responsible_person: ''` for a blank optional field — the mock page's
+  own convention — 23514s against the live `organizations_phone_format`
+  CHECK, which permits a correctly-formatted phone or `null`, never `''`.
+  Reproduced directly against the live project before fixing. (2)
+  `updateOrganization(id, patch)` filtered its patch against a snake_case
+  allow-list while every real caller in this codebase (including
+  `createOrganization` in the very same file) builds camelCase payloads —
+  `responsiblePerson` was silently dropped from every update, never
+  persisting. Fixed by giving both functions the same
+  `{name, responsiblePerson, phone}` camelCase-in shape, mapped to
+  snake_case columns, with `'' → null` normalization for the two optional
+  fields — matching the "empty optional fields become null" convention
+  BACKEND.md's Phase 4.5 section documents for `toFamilyMemberPayload()`.
+- **Duplicate-name detection relies on the database, not a client-side
+  pre-check.** `organizations_name_key` is a functional unique index on
+  `lower(btrim(name))` (confirmed live — it only surfaces via
+  `pg_indexes`, not `pg_constraint`, since it has no named table
+  constraint), stricter than the mock's old exact-string check. A
+  duplicate submission is caught by `isDuplicateOrganizationName()`
+  (same pattern as `family-members.js`'s `isDuplicateNationalId()`)
+  reading the `23505` → `ErrorType.DUPLICATE` mapping `errors.js` already
+  provides.
+- **Delete-blocked-while-in-use reads the already-fetched `aidCount`
+  client-side** (the same number already shown in the table — no extra
+  query), preserving the exact previous UX (friendly Arabic message, no
+  API call attempted). The database's `ON DELETE RESTRICT` on
+  `aid_distributions.organization_id` remains the real backstop for a
+  race between the check and the call.
+- No backend/schema/RLS/migration change of any kind — confirmed via
+  `mcp__supabase__get_advisors`, identical to the Phase 4.8 baseline (the
+  same 5 expected `authenticated_security_definer_function_executable`
+  WARNs plus the pre-existing `auth_leaked_password_protection` WARN).
+- **Remaining mock behavior for this page: none.** Both of
+  `organizations.html`'s `PAGE_ACCESS` roles are now fully real — the
+  first Phase 4.x page to reach that state. (The `aid.html?organizationId=`
+  row-action link now carries a real UUID for the first time; it resolves
+  correctly for Camp Admin's real `aid.js` branch and renders an empty
+  result for Super Admin's still-mock branch, the same "real id reaching a
+  still-mock branch" shape every other cross-phase link has today.)
+- Verified with two new suites:
+  `supabase/tests/phase4.9-role-authorization.test.mjs` (the role-boundary
+  proof above, plus a check that no `service_role` key reaches the
+  browser) and `supabase/tests/phase4.9-organizations-verification.test.mjs`
+  (rendered list/search/summary-stat/per-row-usage-count checks against
+  independent service-role queries, create/edit/delete round trips,
+  duplicate-name rejection, delete-blocked-while-in-use, and an
+  empty-result case). Both suites' fixtures are deleted in `finally`;
+  verified live to leave the table at exactly its original 7 seeded rows.
+- No `service_role` key or other private credential reaches the browser.
