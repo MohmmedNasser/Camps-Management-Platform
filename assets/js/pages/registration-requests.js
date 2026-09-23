@@ -3,6 +3,7 @@
  *
  * Approving creates the displaced record and opens a family for the applicant;
  * rejecting records a reason that the applicant sees on their status screen.
+ * Camp-Admin-only page (PAGE_ACCESS) — no mock branch.
  */
 
 import { qs, delegate, params, setParams } from '../utils/dom.js';
@@ -18,13 +19,19 @@ import {
 } from '../ui/components.js';
 import { dataTable, cellMain, cellMono, rowActions, resultBar } from '../ui/table.js';
 import { toolbar, initToolbar, filterChips } from '../ui/toolbar.js';
-import { confirmDialog, formDialog } from '../ui/modal.js';
-import { textareaField } from '../ui/form.js';
+import { formDialog } from '../ui/modal.js';
+import { textareaField, selectField, inputField } from '../ui/form.js';
+import { rules } from '../utils/validators.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
-import { STATUS, STATUS_LABELS, PAGE_SIZE } from '../core/config.js';
+import { matchesRegistrationRequestFilters } from '../core/selectors.js';
+import {
+  getCampRegistrationRequests,
+  approveRegistrationRequest,
+  rejectRegistrationRequest,
+} from '../supabase/registration-requests.js';
+import { STATUS, STATUS_LABELS, GENDERS, PAGE_SIZE } from '../core/config.js';
 
 const state = { q: '', status: STATUS.PENDING, page: 1 };
 
@@ -74,38 +81,58 @@ function init({ session, content }) {
   });
 
   delegate(content, 'click', '[data-approve]', async (event, node) => {
-    const request = store.registrationRequests.get(node.dataset.approve);
+    const rows = await store.load(() => collect(session));
+    const request = rows.find((row) => row.id === node.dataset.approve);
     if (!request) return;
-
-    const ok = await confirmDialog({
-      title: 'قبول طلب التسجيل',
-      text: `سيتم إنشاء سجل نازح وأسرة جديدة باسم "${request.fullName}" وتفعيل حسابه في ${select.campName(request.campId)}.`,
-      confirmLabel: 'قبول الطلب',
-      variant: 'default',
-    });
-    if (!ok) return;
-
-    const result = select.approveRequest(request.id, session.id);
-    if (!result) {
-      toast.error('تعذر القبول', 'تمت مراجعة هذا الطلب مسبقاً.');
-    } else {
-      toast.success('تم القبول', `تم إنشاء الأسرة ${result.familyId} وتفعيل الحساب.`);
-    }
-    load(session);
+    const ok = await approveFlow(request);
+    if (ok) load(session);
   });
 
   delegate(content, 'click', '[data-reject]', async (event, node) => {
-    const request = store.registrationRequests.get(node.dataset.reject);
+    const rows = await store.load(() => collect(session));
+    const request = rows.find((row) => row.id === node.dataset.reject);
     if (!request) return;
-    await rejectFlow(session, request);
-    load(session);
+    const ok = await rejectFlow(request);
+    if (ok) load(session);
   });
 
   load(session);
 }
 
+/** The approve flow needs gender + birth date — the RPC requires both and
+ *  the request itself carries neither (Phase 4.7 spec §2). */
+async function approveFlow(request) {
+  const values = await formDialog({
+    title: 'قبول طلب التسجيل',
+    description: `سيتم إنشاء سجل نازح وأسرة جديدة باسم "${request.fullName}" وتفعيل حسابه.`,
+    fields:
+      selectField({ name: 'gender', label: 'الجنس', options: GENDERS, required: true }) +
+      inputField({ name: 'birthDate', label: 'تاريخ الميلاد', type: 'date', required: true }),
+    submitLabel: 'قبول الطلب',
+    validate: (input) => {
+      const errors = {};
+      const genderError = rules.required('الجنس')(input.gender);
+      if (genderError) errors.gender = genderError;
+      const dateError = rules.required('تاريخ الميلاد')(input.birthDate) || rules.pastDate('تاريخ الميلاد')(input.birthDate);
+      if (dateError) errors.birthDate = dateError;
+      return errors;
+    },
+  });
+  if (!values) return false;
+
+  try {
+    await approveRegistrationRequest(request.id, { gender: values.gender, birthDate: values.birthDate });
+    toast.success('تم القبول', 'تم إنشاء الأسرة وتفعيل الحساب.');
+    return true;
+  } catch (error) {
+    console.error(error);
+    toast.error('تعذر القبول', error.message || 'حدث خطأ غير متوقع.');
+    return false;
+  }
+}
+
 /** Rejection always asks for a reason — the applicant sees it. */
-async function rejectFlow(session, request) {
+async function rejectFlow(request) {
   const values = await formDialog({
     title: 'رفض طلب التسجيل',
     description: `سيتم إشعار "${request.fullName}" بالقرار وبالسبب المذكور.`,
@@ -119,14 +146,34 @@ async function rejectFlow(session, request) {
     submitLabel: 'رفض الطلب',
     validate: (input) => (input.note && input.note.trim().length >= 5 ? {} : { note: 'اذكر سبباً واضحاً للرفض.' }),
   });
-
   if (!values) return false;
-  select.rejectRequest(request.id, session.id, values.note.trim());
-  toast.success('تم الرفض', 'تم تسجيل القرار وإشعار مقدم الطلب.');
-  return true;
+
+  try {
+    await rejectRegistrationRequest(request.id, values.note.trim());
+    toast.success('تم الرفض', 'تم تسجيل القرار وإشعار مقدم الطلب.');
+    return true;
+  } catch (error) {
+    console.error(error);
+    toast.error('تعذر الرفض', error.message || 'حدث خطأ غير متوقع.');
+    return false;
+  }
 }
 
 /* ---- Data + rendering ------------------------------------------------------ */
+
+async function collect(session) {
+  const rows = await getCampRegistrationRequests(session.campId);
+  return rows.filter((row) => matchesRegistrationRequestFilters(row, { query: state.q, status: state.status }));
+}
+
+function countsByStatus(rows) {
+  return {
+    all: rows.length,
+    [STATUS.PENDING]: rows.filter((row) => row.status === STATUS.PENDING).length,
+    [STATUS.APPROVED]: rows.filter((row) => row.status === STATUS.APPROVED).length,
+    [STATUS.REJECTED]: rows.filter((row) => row.status === STATUS.REJECTED).length,
+  };
+}
 
 async function load(session) {
   const target = qs('#results');
@@ -134,10 +181,11 @@ async function load(session) {
   target.innerHTML = skeletonTable(5);
 
   try {
-    const [rows, counts] = await store.load(() => [
-      select.searchRequests({ query: state.q, status: state.status, campId: session.campId }),
-      select.requestCountsByStatus(session.campId),
-    ]);
+    const allRows = await store.load(() => getCampRegistrationRequests(session.campId));
+    const counts = countsByStatus(allRows);
+    const rows = allRows
+      .filter((row) => matchesRegistrationRequestFilters(row, { query: state.q, status: state.status }))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     const chips = qs('#chips');
     if (chips) {
@@ -168,12 +216,7 @@ function resultsView(rows) {
   const slice = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const columns = [
-    {
-      key: 'fullName',
-      label: 'مقدم الطلب',
-      primary: true,
-      cell: (row) => cellMain(row.fullName, row.email),
-    },
+    { key: 'fullName', label: 'مقدم الطلب', primary: true, cell: (row) => cellMain(row.fullName, row.email) },
     { key: 'nationalId', label: 'رقم الهوية', cell: (row) => cellMono(row.nationalId) },
     { key: 'phone', label: 'الهاتف', cell: (row) => cellMono(formatPhone(row.phone)) },
     { key: 'createdAt', label: 'تاريخ الطلب', cell: (row) => formatDate(row.createdAt) },
@@ -185,22 +228,9 @@ function resultsView(rows) {
       actions: true,
       cell: (row) =>
         rowActions([
-          {
-            iconName: 'eye',
-            title: `عرض طلب ${row.fullName}`,
-            href: pageUrl('registration-request-details.html', { id: row.id }),
-          },
-          row.status === STATUS.PENDING && {
-            iconName: 'checkCircle',
-            title: `قبول طلب ${row.fullName}`,
-            attrs: `data-approve="${row.id}"`,
-          },
-          row.status === STATUS.PENDING && {
-            iconName: 'xCircle',
-            title: `رفض طلب ${row.fullName}`,
-            variant: 'danger',
-            attrs: `data-reject="${row.id}"`,
-          },
+          { iconName: 'eye', title: `عرض طلب ${row.fullName}`, href: pageUrl('registration-request-details.html', { id: row.id }) },
+          row.status === STATUS.PENDING && { iconName: 'checkCircle', title: `قبول طلب ${row.fullName}`, attrs: `data-approve="${row.id}"` },
+          row.status === STATUS.PENDING && { iconName: 'xCircle', title: `رفض طلب ${row.fullName}`, variant: 'danger', attrs: `data-reject="${row.id}"` },
         ]),
     },
   ];
@@ -217,11 +247,7 @@ function resultsView(rows) {
 
 function emptyView() {
   if (state.q) {
-    return emptyState({
-      iconName: 'search',
-      title: 'لا توجد نتائج مطابقة',
-      text: 'جرّب كلمات بحث أخرى.',
-    });
+    return emptyState({ iconName: 'search', title: 'لا توجد نتائج مطابقة', text: 'جرّب كلمات بحث أخرى.' });
   }
   if (state.status === STATUS.PENDING) {
     return emptyState({
@@ -230,9 +256,5 @@ function emptyView() {
       text: 'تمت مراجعة جميع الطلبات الواردة. ستظهر الطلبات الجديدة هنا فور وصولها.',
     });
   }
-  return emptyState({
-    iconName: 'clipboard',
-    title: 'لا توجد طلبات في هذه الحالة',
-    text: 'اختر حالة أخرى لعرض الطلبات المسجلة.',
-  });
+  return emptyState({ iconName: 'clipboard', title: 'لا توجد طلبات في هذه الحالة', text: 'اختر حالة أخرى لعرض الطلبات المسجلة.' });
 }

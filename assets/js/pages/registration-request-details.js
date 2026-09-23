@@ -1,8 +1,10 @@
 /**
  * One registration request, with the approve / reject decision.
  *
- * The duplicate check is shown before the decision: a national ID already
- * registered anywhere is the single reason a request cannot be approved.
+ * The duplicate check is shown before the decision, scoped to what RLS
+ * lets this Camp Admin see (their own camp only) — a cross-camp duplicate
+ * is still caught by the database's global unique index at approval time.
+ * Camp-Admin-only page (PAGE_ACCESS) — no mock branch.
  */
 
 import { esc, params, delegate } from '../utils/dom.js';
@@ -22,13 +24,20 @@ import {
   definition,
   definitionList,
 } from '../ui/components.js';
-import { confirmDialog, formDialog } from '../ui/modal.js';
-import { textareaField } from '../ui/form.js';
+import { formDialog } from '../ui/modal.js';
+import { textareaField, selectField, inputField } from '../ui/form.js';
+import { rules } from '../utils/validators.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
-import { STATUS } from '../core/config.js';
+import { STATUS, GENDERS } from '../core/config.js';
+import {
+  getRegistrationRequest,
+  findOwnCampDuplicate,
+  approveRegistrationRequest,
+  rejectRegistrationRequest,
+} from '../supabase/registration-requests.js';
+import { getFamilyMember } from '../supabase/family-members.js';
 
 const shell = await mountShell({ active: 'registration-requests.html', title: 'تفاصيل طلب التسجيل' });
 if (shell) init(shell);
@@ -45,11 +54,7 @@ async function init({ session, content }) {
         iconName: 'alertTriangle',
         title: 'الطلب غير موجود',
         text: 'قد يكون محذوفاً أو خارج نطاق صلاحياتك.',
-        actions: button({
-          label: 'العودة إلى الطلبات',
-          variant: 'primary',
-          href: pageUrl('registration-requests.html'),
-        }),
+        actions: button({ label: 'العودة إلى الطلبات', variant: 'primary', href: pageUrl('registration-requests.html') }),
       });
       return;
     }
@@ -63,22 +68,22 @@ async function init({ session, content }) {
   }
 }
 
-function collect(session, id) {
-  const raw = store.registrationRequests.get(id);
-  if (!raw || raw.campId !== session.campId) return { request: null };
+async function collect(session, id) {
+  const request = await getRegistrationRequest(id, session.campLabel);
+  if (!request) return { request: null };
 
-  const request = select.requestRow(raw);
-  const duplicate = store.displaced.find((person) => person.nationalId === raw.nationalId);
+  const duplicate = await findOwnCampDuplicate(request.nationalId, session.campId);
+  // Visible only once approved — the account's profile.camp_id is null
+  // until then, so RLS hides it from this Camp Admin beforehand (spec §2).
+  const account =
+    request.status === STATUS.APPROVED && request.displacedId
+      ? await getFamilyMember(request.displacedId)
+      : null;
 
-  return {
-    request,
-    duplicate,
-    duplicateCamp: duplicate ? select.campName(duplicate.campId) : '',
-    account: store.users.find((user) => user.requestId === raw.id || user.email === raw.email),
-  };
+  return { request, duplicate, account };
 }
 
-function view({ request, duplicate, duplicateCamp, account }) {
+function view({ request, duplicate, account }) {
   const pending = request.status === STATUS.PENDING;
 
   return `
@@ -100,14 +105,14 @@ function view({ request, duplicate, duplicateCamp, account }) {
       duplicate
         ? alert({
             variant: 'error',
-            title: 'رقم الهوية مسجّل مسبقاً',
-            text: `هذا الرقم مسجّل باسم "${duplicate.fullName}" في ${duplicateCamp}. لا يمكن تسجيل الشخص نفسه في أكثر من مخيم.`,
+            title: 'رقم الهوية مسجّل مسبقاً في مخيمك',
+            text: `هذا الرقم مسجّل باسم "${duplicate.full_name}" في مخيمك الحالي. لا يمكن تسجيل الشخص نفسه مرتين.`,
           })
         : pending
           ? alert({
               variant: 'success',
-              title: 'لا يوجد تسجيل مكرر',
-              text: 'رقم الهوية غير مسجّل في أي مخيم آخر، ويمكن قبول الطلب.',
+              title: 'لا يوجد تسجيل مكرر في مخيمك',
+              text: 'رقم الهوية غير مسجّل في مخيمك الحالي. قد يظهر تعارض عند القبول إذا كان مسجلاً في مخيم آخر.',
             })
           : ''
     }
@@ -132,18 +137,13 @@ function view({ request, duplicate, duplicateCamp, account }) {
                 title: 'قرار المراجعة',
                 body: definitionList([
                   definition('القرار', request.status === STATUS.APPROVED ? 'مقبول' : 'مرفوض'),
-                  definition('تمت المراجعة بواسطة', request.reviewerName),
+                  definition('تمت المراجعة بواسطة', request.reviewerName || '—'),
                   definition('تاريخ المراجعة', formatDateTime(request.reviewedAt)),
                   definition('السبب / الملاحظات', request.note),
                 ]),
                 foot:
                   request.status === STATUS.APPROVED && request.displacedId
-                    ? button({
-                        label: 'فتح ملف النازح',
-                        variant: 'secondary',
-                        iconName: 'user',
-                        href: pageUrl('displaced-details.html', { id: request.displacedId }),
-                      })
+                    ? button({ label: 'فتح ملف النازح', variant: 'secondary', iconName: 'user', href: pageUrl('displaced-details.html', { id: request.displacedId }) })
                     : '',
               })
             : card({
@@ -180,59 +180,67 @@ function view({ request, duplicate, duplicateCamp, account }) {
           title: 'الحساب المرتبط',
           body: account
             ? definitionList([
-                definition('البريد الإلكتروني', account.email),
-                definition('حالة الحساب', account.status === STATUS.APPROVED ? 'مفعّل' : 'قيد المراجعة'),
-                definition('تاريخ الإنشاء', formatDate(account.createdAt)),
+                definition('الاسم', account.full_name),
+                definition('حالة الحساب', 'مفعّل'),
               ])
-            : `<p class="u-sm u-secondary">لا يوجد حساب مرتبط بهذا الطلب.</p>`,
+            : `<p class="u-sm u-secondary">لا يوجد حساب مرتبط ظاهر من هنا.</p>`,
         })}
       </aside>
     </div>`;
 }
 
-function wire(content, session, { request, duplicate, duplicateCamp }) {
+function wire(content, session, { request, duplicate }) {
   delegate(content, 'click', '[data-approve]', async () => {
     if (duplicate) {
-      toast.error('تعذر القبول', `رقم الهوية مسجّل مسبقاً في ${duplicateCamp}.`);
+      toast.error('تعذر القبول', `رقم الهوية مسجّل مسبقاً في مخيمك باسم "${duplicate.full_name}".`);
       return;
     }
 
-    const ok = await confirmDialog({
+    const values = await formDialog({
       title: 'قبول طلب التسجيل',
-      text: `سيتم إنشاء سجل نازح وأسرة جديدة باسم "${request.fullName}" وتفعيل حسابه.`,
-      confirmLabel: 'قبول الطلب',
-      variant: 'default',
+      description: `سيتم إنشاء سجل نازح وأسرة جديدة باسم "${request.fullName}" وتفعيل حسابه.`,
+      fields:
+        selectField({ name: 'gender', label: 'الجنس', options: GENDERS, required: true }) +
+        inputField({ name: 'birthDate', label: 'تاريخ الميلاد', type: 'date', required: true }),
+      submitLabel: 'قبول الطلب',
+      validate: (input) => {
+        const errors = {};
+        const genderError = rules.required('الجنس')(input.gender);
+        if (genderError) errors.gender = genderError;
+        const dateError = rules.required('تاريخ الميلاد')(input.birthDate) || rules.pastDate('تاريخ الميلاد')(input.birthDate);
+        if (dateError) errors.birthDate = dateError;
+        return errors;
+      },
     });
-    if (!ok) return;
+    if (!values) return;
 
-    const result = select.approveRequest(request.id, session.id);
-    if (!result) {
-      toast.error('تعذر القبول', 'تمت مراجعة هذا الطلب مسبقاً.');
-      return;
+    try {
+      const memberId = await approveRegistrationRequest(request.id, { gender: values.gender, birthDate: values.birthDate });
+      toast.success('تم القبول', 'تم إنشاء الأسرة وتفعيل الحساب.');
+      go('displaced-details.html', { id: memberId });
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر القبول', error.message || 'حدث خطأ غير متوقع.');
     }
-    toast.success('تم القبول', `تم إنشاء الأسرة ${result.familyId}.`);
-    go('displaced-details.html', { id: result.person.id });
   });
 
   delegate(content, 'click', '[data-reject]', async () => {
     const values = await formDialog({
       title: 'رفض طلب التسجيل',
       description: `سيتم إشعار "${request.fullName}" بالقرار وبالسبب المذكور.`,
-      fields: textareaField({
-        name: 'note',
-        label: 'سبب الرفض',
-        required: true,
-        rows: 4,
-        placeholder: 'مثال: رقم الهوية مسجّل مسبقاً في مخيم آخر.',
-      }),
+      fields: textareaField({ name: 'note', label: 'سبب الرفض', required: true, rows: 4, placeholder: 'مثال: رقم الهوية مسجّل مسبقاً في مخيم آخر.' }),
       submitLabel: 'رفض الطلب',
-      validate: (input) =>
-        input.note && input.note.trim().length >= 5 ? {} : { note: 'اذكر سبباً واضحاً للرفض.' },
+      validate: (input) => (input.note && input.note.trim().length >= 5 ? {} : { note: 'اذكر سبباً واضحاً للرفض.' }),
     });
-
     if (!values) return;
-    select.rejectRequest(request.id, session.id, values.note.trim());
-    toast.success('تم الرفض', 'تم تسجيل القرار وإشعار مقدم الطلب.');
-    go('registration-requests.html');
+
+    try {
+      await rejectRegistrationRequest(request.id, values.note.trim());
+      toast.success('تم الرفض', 'تم تسجيل القرار وإشعار مقدم الطلب.');
+      go('registration-requests.html');
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الرفض', error.message || 'حدث خطأ غير متوقع.');
+    }
   });
 }
