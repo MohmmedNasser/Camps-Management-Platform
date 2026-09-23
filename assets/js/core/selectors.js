@@ -802,6 +802,23 @@ export function organizationInUse(organizationId) {
 
 /* ---- Registration requests ----------------------------------------------- */
 
+/**
+ * Pure predicate over one real (already camelCase) registration-request
+ * row, independent of the mock `searchRequests()` below — same split
+ * `matchesAidFilters()` uses for the real Camp Admin aid page (Phase 4.6).
+ */
+export function matchesRegistrationRequestFilters(row, { query = '', status = '' } = {}) {
+  if (status && row.status !== status) return false;
+  const term = query.trim().toLowerCase();
+  if (!term) return true;
+  return (
+    row.fullName.toLowerCase().includes(term) ||
+    (row.nationalId || '').includes(term) ||
+    (row.phone || '').includes(term) ||
+    (row.email || '').toLowerCase().includes(term)
+  );
+}
+
 export function requestRow(request) {
   return {
     ...request,
