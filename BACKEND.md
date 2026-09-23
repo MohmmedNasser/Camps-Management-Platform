@@ -1093,3 +1093,94 @@ read and write real data with **no mock branch**, matching
   against the `registration_requests_approved_has_member` CHECK firing when
   deleting a family that originated from an approved request (pre-existing
   since Phase 4.1/4.4, not introduced here — spec §9).
+
+---
+
+## 24 · Phase 4.8 — Documents on real data
+
+`assets/js/pages/documents.js` now reads/writes real data for the
+`camp_admin` role. Unlike Phases 4.4–4.7, the hard backend work already
+existed — Phase 3 (§16) had already built and shipped the three Cloudinary
+Edge Functions — so this phase is frontend wiring plus two real bugs found
+along the way, one of them a previously-invisible blocker for the whole
+feature.
+
+- **Source:** a new `getCampDocuments(campId)` in
+  `assets/js/supabase/documents.js`, embedding `family_members`, `families`
+  and `profiles` (uploader) directly — all three are real foreign keys on
+  `documents`, so this needed no view-based workaround the way
+  `families.js`/`family-members.js` did. Client-side search/category-filter
+  on that result via the new pure `selectors.matchesDocumentFilters()`, same
+  convention as `matchesAidFilters()`/`matchesRegistrationRequestFilters()`.
+- **Camp scope:** `session.campId` only; RLS (`documents_select_scoped`)
+  is the actual boundary regardless of what the client sends. No backend
+  change of any kind — no table, column, view, RLS policy, trigger, or
+  migration was added or modified.
+- **Bug found and fixed — upload was silently broken for every real
+  session since Phase 4.1.** `documents.js`'s upload modal sourced its
+  person-picker from the mock `select.personOptions()` (localStorage),
+  whose ids/camp ids never match a real session's UUIDs. Since Phase 4.1
+  gave every role a genuine Supabase session, `backendAvailable()` (Phase
+  3, dormant until then) has been returning `true` all along — so a real
+  Camp Admin either saw an empty picker or, if a mock id somehow got
+  submitted, a 403 from `documents-upload`'s ownership-resolution query.
+  Fixed by caching `getCampDisplacedPersons(session.campId)` (Phase 4.5,
+  reused unchanged) once in `init()`, same "fetch real option lists once"
+  convention `aid.js`'s `campAdminOptions` already established.
+- **Bug found and fixed — a second, independent gap: real preview never
+  worked.** `openPreview()` only ever rendered an `<img>` from `row.dataUrl`
+  (the mock/local-file path); it never called `documents-access` with
+  `mode:'inline'` even when a Cloudinary asset existed. Fixed: for a real
+  image document, the modal now fetches the blob through the same function
+  `downloadDocument()` already uses (just `mode:'inline'` instead of
+  `'attachment'`) and swaps it into the placeholder. PDFs keep the existing,
+  still-accurate "no preview, download instead" copy — the brief didn't ask
+  for a PDF viewer, so none was added.
+- **Bug found and fixed — a previously-invisible CORS gap blocked every
+  real browser call to all three Cloudinary functions.** Discovered live,
+  via Playwright, on this phase's first real browser upload attempt:
+  Chromium's preflight was rejected with *"Request header field
+  x-application-name is not allowed by Access-Control-Allow-Headers"* —
+  `supabase-js`'s browser client attaches this header automatically, and
+  `supabase/functions/_shared/cors.ts`'s allow-list never included it.
+  This has been broken since Phase 3 shipped; it was invisible until now
+  because Phase 3's own test suite calls these functions from Node (no CORS
+  enforcement) and no page had a real browser session before Phase 4.1.
+  Fixed by adding `x-application-name, x-supabase-api-version` to
+  `Access-Control-Allow-Headers` and redeploying all three functions
+  (`documents-upload` v9, `documents-access` v10, `documents-delete` v7) —
+  confirmed live: the same upload failed before the fix and succeeded end
+  to end (including preview and delete) after it.
+- **Delete always calls the real function with the row's own `id`, never a
+  `backendId`.** `documents-delete` already no-ops the Cloudinary call for
+  a `storage_provider='pending'` row and just deletes the metadata
+  (confirmed live before writing any code) — so a Camp Admin can delete
+  any of their camp's rows, seed placeholders included, through one
+  unconditional call.
+- **Test-debris finding and fix.** Investigation found 82 live `documents`
+  rows where the seed only ever creates 12: 70 leftover
+  `storage_provider='cloudinary'` rows (35 `id_card` in مخيم الرحمة, 35
+  `medical_report` in مخيم النور) with real Cloudinary assets, accumulated
+  by every `npm run test:phase3`/`test:all` run across Phases 4.1–4.7.
+  Root cause: `phase3-documents.test.mjs` proves two *rejected* deletes
+  (displaced can't delete their own upload; camp admin A can't delete camp
+  B's) but never cleans up the documents it used to prove them. Fixed with
+  a final test that deletes both through the real `documents-delete`
+  function, signed in as whichever admin actually owns that row's camp —
+  no new code path, no Cloudinary secret needed in the test file. The 70
+  pre-existing rows were removed the same way, via a one-off local script;
+  the live project now shows only the 12 legitimate seed rows.
+- Super Admin's document list (mock, with the `campId` filter) and the
+  displaced person's own document list/upload (mock) are unchanged — later
+  Phase 4 work, matching the Phase 4.2–4.7 "Camp Admin first" convention.
+- Verified with two new suites:
+  `supabase/tests/phase4.8-camp-isolation.test.mjs` (RLS scoping, raw
+  update/delete rejection, a cross-camp `documents-upload` rejection, and
+  the rendered list never containing another camp's document) and
+  `supabase/tests/phase4.8-documents-verification.test.mjs` (rendered
+  list/search/category-filter/summary-stat counts against independent
+  service-role queries, a real upload → preview → delete round trip through
+  the actual UI and Cloudinary, and an empty-result case). Both suites'
+  fixtures are deleted in `finally`, verified live to leave zero debris —
+  the discipline the Phase 3 suite itself now also follows.
+- No `service_role` key or other private credential reaches the browser.
