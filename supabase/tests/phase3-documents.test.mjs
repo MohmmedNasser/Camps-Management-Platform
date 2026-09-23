@@ -329,6 +329,40 @@ test('file validation: a file over the size limit is rejected', async () => {
 });
 
 /* =============================================================================
+   7 · Cleanup (Phase 4.8 fix)
+   ---------------------------------------------------------------------------
+   world.docInA and the file-validation loop already delete what they create,
+   but world.docByDisplacedA and world.docInB never get a successful delete
+   anywhere above — every earlier test that touches them is specifically
+   proving a REJECTED delete (displaced can't delete their own document;
+   camp admin A can't delete camp B's). Left as-is, this is exactly the bug
+   that produced 70 leftover live rows/Cloudinary assets across every prior
+   `npm run test:phase3`/`npm run test:all` run (one of each per run). Each
+   is deleted here by an admin who genuinely has permission — camp admin A
+   owns docByDisplacedA's camp, camp admin B owns docInB's camp — through the
+   same real documents-delete function every other test already uses, so
+   this exercises no new code path and needs no Cloudinary secret in this
+   file at all.
+   ========================================================================== */
+
+test('cleanup: remove the documents this suite created but could not delete via a rejected-delete test', async () => {
+  if (world.docByDisplacedA) {
+    const client = await as('campAdminA');
+    const { error } = await remove(client, world.docByDisplacedA);
+    assert.equal(error, null, error && JSON.stringify(error));
+  }
+  if (world.docInB) {
+    const client = await as('campAdminB');
+    const { error } = await remove(client, world.docInB);
+    assert.equal(error, null, error && JSON.stringify(error));
+  }
+
+  const leftoverIds = [world.docInA, world.docByDisplacedA, world.docInB].filter(Boolean);
+  const { data: leftover } = await admin.from('documents').select('id').in('id', leftoverIds);
+  assert.equal((leftover || []).length, 0, 'this suite left at least one document row behind');
+});
+
+/* =============================================================================
    helpers
    ========================================================================== */
 
