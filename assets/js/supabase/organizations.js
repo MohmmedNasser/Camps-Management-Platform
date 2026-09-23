@@ -35,19 +35,34 @@ export async function getOrganization(id) {
   return run(client.from('organizations').select('*').eq('id', id).single());
 }
 
-/** Phone stays optional (domain rule 11) — never marked required here or in a schema. */
+/**
+ * Phone stays optional (domain rule 11) — never marked required here or in
+ * a schema. An empty string is normalized to null: organizations_phone_format
+ * only permits a correctly-formatted phone OR null, not '' (confirmed live —
+ * an empty string 23514s).
+ */
 export async function createOrganization({ name, responsiblePerson, phone }) {
   const client = requireClient();
   return run(
-    client.from('organizations').insert({ name, responsible_person: responsiblePerson, phone }).select().single()
+    client
+      .from('organizations')
+      .insert({ name, responsible_person: responsiblePerson || null, phone: phone || null })
+      .select()
+      .single()
   );
 }
 
-export async function updateOrganization(id, patch) {
+/** Same camelCase-in shape and empty-string-to-null normalization as createOrganization(). */
+export async function updateOrganization(id, { name, responsiblePerson, phone }) {
   const client = requireClient();
-  const allowed = ['name', 'responsible_person', 'phone'];
-  const body = Object.fromEntries(Object.entries(patch).filter(([k]) => allowed.includes(k)));
-  return run(client.from('organizations').update(body).eq('id', id).select().single());
+  return run(
+    client
+      .from('organizations')
+      .update({ name, responsible_person: responsiblePerson || null, phone: phone || null })
+      .eq('id', id)
+      .select()
+      .single()
+  );
 }
 
 export async function deleteOrganization(id) {
