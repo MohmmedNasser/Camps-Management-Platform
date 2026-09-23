@@ -1006,6 +1006,23 @@ export function searchDocuments({ query = '', category = '', campId = '', sessio
     .sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
 }
 
+/**
+ * Pure predicate over one real (already camelCase) document row,
+ * independent of the mock searchDocuments() above — same split
+ * matchesAidFilters()/matchesRegistrationRequestFilters() use for their
+ * real Camp Admin pages (Phase 4.6/4.7).
+ */
+export function matchesDocumentFilters(row, { query = '', category = '' } = {}) {
+  if (category && row.category !== category) return false;
+  const term = query.trim().toLowerCase();
+  if (!term) return true;
+  return (
+    row.name.toLowerCase().includes(term) ||
+    row.personName.toLowerCase().includes(term) ||
+    (row.familyId || '').toLowerCase().includes(term)
+  );
+}
+
 export function documentsByCategory(session) {
   const rows = documentsFor(session);
   return DOCUMENT_CATEGORIES.map((category) => ({

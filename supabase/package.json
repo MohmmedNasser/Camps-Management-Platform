@@ -27,7 +27,9 @@
     "test:phase4.6-aids": "node --test tests/phase4.6-aids-verification.test.mjs",
     "test:phase4.7-camp-isolation": "node --test tests/phase4.7-camp-isolation.test.mjs",
     "test:phase4.7-registration-requests": "node --test tests/phase4.7-registration-requests-verification.test.mjs",
-    "test:all": "npm run test:schema && npm run test:phase2 && npm run test:phase3 && npm run test:browser-smoke && npm run test:unit-errors && npm run test:phase4-auth-frontend && npm run test:phase4.2-dashboard && npm run test:phase4.3-camp-isolation && npm run test:phase4.3-dashboard && npm run test:phase4.4-camp-isolation && npm run test:phase4.4-families && npm run test:phase4.5-camp-isolation && npm run test:phase4.5-displaced && npm run test:phase4.6-camp-isolation && npm run test:phase4.6-aids && npm run test:phase4.7-camp-isolation && npm run test:phase4.7-registration-requests",
+    "test:phase4.8-camp-isolation": "node --test tests/phase4.8-camp-isolation.test.mjs",
+    "test:phase4.8-documents": "node --test tests/phase4.8-documents-verification.test.mjs",
+    "test:all": "npm run test:schema && npm run test:phase2 && npm run test:phase3 && npm run test:browser-smoke && npm run test:unit-errors && npm run test:phase4-auth-frontend && npm run test:phase4.2-dashboard && npm run test:phase4.3-camp-isolation && npm run test:phase4.3-dashboard && npm run test:phase4.4-camp-isolation && npm run test:phase4.4-families && npm run test:phase4.5-camp-isolation && npm run test:phase4.5-displaced && npm run test:phase4.6-camp-isolation && npm run test:phase4.6-aids && npm run test:phase4.7-camp-isolation && npm run test:phase4.7-registration-requests && npm run test:phase4.8-camp-isolation && npm run test:phase4.8-documents",
     "frontend:config": "node scripts/write-frontend-config.mjs"
   },
   "dependencies": {

@@ -4,8 +4,12 @@
  * Documents carry no expiry date, and there is no "proof of displacement"
  * category — both are deliberate absences in the domain.
  *
- * Files never leave the browser in this phase: a picked image is kept as a
- * data URL for the preview, anything larger keeps its metadata only.
+ * Camp Admin (Phase 4.8) reads/writes real Supabase + Cloudinary data end
+ * to end. Super Admin and the displaced person's own document list stay on
+ * the Phase 3 mock/localStorage path: a picked image is kept as a data URL
+ * for the preview, and upload mirrors into localStorage (marked with
+ * backendId when a real backend session exists, so download/delete still
+ * route to the real Cloudinary Edge Functions for those rows).
  */
 
 import { esc, qs, delegate, params, setParams } from '../utils/dom.js';
@@ -35,9 +39,13 @@ import { isConfigured, currentUserId } from '../core/supabase-client.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import * as cloudinary from '../supabase/cloudinary.js';
+import { getCampDocuments } from '../supabase/documents.js';
+import { getCampDisplacedPersons } from '../supabase/family-members.js';
 import { ROLES, DOCUMENT_CATEGORIES } from '../core/config.js';
 
 const state = { q: '', category: '', campId: '' };
+let campPeople = []; // Camp Admin's real person options, fetched once in init()
+let currentRows = []; // last rendered rows, for the data-preview/download/delete handlers
 
 const MIME_EXTENSIONS = {
   'image/jpeg': 'jpg',
@@ -56,11 +64,10 @@ function filenameWithExtension(name, mime) {
 /**
  * True when a real Supabase session exists — i.e. the Cloudinary Edge
  * Functions (documents-upload/-access/-delete) can actually be called.
- * No page establishes such a session today (login is still the localStorage
- * prototype — see BACKEND.md's Phase 3 notes), so this resolves false in
- * every session that exists right now; it is checked on demand rather than
- * cached so the moment that changes, these actions pick it up with no
- * further change here.
+ * Every role has a real session since Phase 4.1; this is used only by the
+ * non-Camp-Admin (mock-list) upload/delete paths below, which mirror into
+ * localStorage but still route a real backend session's rows through the
+ * real Edge Functions for download/delete.
  */
 async function backendAvailable() {
   return isConfigured && Boolean(await currentUserId());
@@ -112,11 +119,16 @@ function filterSpec(session) {
   ];
 }
 
-function init({ session, content }) {
+async function init({ session, content }) {
   const query = params();
   state.q = query.q || '';
   state.category = query.category || '';
   state.campId = query.campId || '';
+
+  if (session.role === ROLES.CAMP_ADMIN) {
+    content.innerHTML = skeletonTable(5);
+    campPeople = (await getCampDisplacedPersons(session.campId)).map((p) => ({ value: p.id, label: p.fullName }));
+  }
 
   content.innerHTML = `
     ${pageHeader({
@@ -159,17 +171,17 @@ function init({ session, content }) {
   delegate(content, 'click', '[data-upload]', () => openUploader(session));
 
   delegate(content, 'click', '[data-preview]', (event, node) => {
-    const row = store.documents.get(node.dataset.preview);
-    if (row) openPreview(select.documentRow(row));
+    const row = currentRows.find((r) => r.id === node.dataset.preview);
+    if (row) openPreview(row);
   });
 
   delegate(content, 'click', '[data-download]', async (event, node) => {
-    const row = store.documents.get(node.dataset.download);
-    if (row) await downloadDocument(select.documentRow(row));
+    const row = currentRows.find((r) => r.id === node.dataset.download);
+    if (row) await downloadDocument(row);
   });
 
   delegate(content, 'click', '[data-delete]', async (event, node) => {
-    const row = store.documents.get(node.dataset.delete);
+    const row = currentRows.find((r) => r.id === node.dataset.delete);
     if (!row) return;
     const ok = await confirmDialog({
       title: 'حذف المستند',
@@ -177,6 +189,17 @@ function init({ session, content }) {
       confirmLabel: 'حذف',
     });
     if (!ok) return;
+
+    if (session.role === ROLES.CAMP_ADMIN) {
+      try {
+        await cloudinary.deleteDocumentAsset(row.id);
+        toast.success('تم الحذف', 'تم حذف المستند.');
+        load(session);
+      } catch (error) {
+        toast.error('تعذر الحذف', error.message || 'حدث خطأ غير متوقع');
+      }
+      return;
+    }
 
     if (row.backendId) {
       try {
@@ -204,23 +227,36 @@ function init({ session, content }) {
 
 /* ---- Data + rendering ------------------------------------------------------ */
 
+/**
+ * The single query behind the table and the summary stat. Camp Admin reads
+ * real data (getCampDocuments), returning the unfiltered array too so the
+ * "أنواع المستندات" stat keeps counting the whole camp regardless of the
+ * active search/category filter, matching what select.documentsByCategory()
+ * already guarantees for the mock branch below.
+ */
+async function collect(session) {
+  if (session.role !== ROLES.CAMP_ADMIN) {
+    return {
+      rows: select.searchDocuments({ query: state.q, category: state.category, campId: state.campId, session }),
+      allRows: null,
+    };
+  }
+  const allRows = await getCampDocuments(session.campId);
+  const rows = allRows.filter((row) => select.matchesDocumentFilters(row, { query: state.q, category: state.category }));
+  return { rows, allRows };
+}
+
 async function load(session) {
   const target = qs('#results');
   if (!target) return;
   target.innerHTML = skeletonTable(5);
 
   try {
-    const rows = await store.load(() =>
-      select.searchDocuments({
-        query: state.q,
-        category: state.category,
-        campId: state.campId,
-        session,
-      })
-    );
+    const { rows, allRows } = await store.load(() => collect(session));
+    currentRows = rows;
     target.innerHTML = resultsView(session, rows);
     const summary = qs('#summary');
-    if (summary) summary.innerHTML = summaryView(session, rows);
+    if (summary) summary.innerHTML = summaryView(session, rows, allRows);
   } catch (error) {
     console.error(error);
     target.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -228,14 +264,16 @@ async function load(session) {
   }
 }
 
-function summaryView(session, rows) {
-  const byCategory = select.documentsByCategory(session).filter((entry) => entry.count > 0);
+function summaryView(session, rows, allRows = null) {
+  const byCategory = allRows
+    ? new Set(allRows.map((row) => row.category))
+    : new Set(select.documentsByCategory(session).filter((entry) => entry.count > 0).map((entry) => entry.value));
   const totalSize = rows.reduce((sum, row) => sum + Number(row.size || 0), 0);
 
   return `
     <div class="grid grid--3 u-mb-5">
       ${statCard({ label: 'عدد المستندات', value: String(rows.length), iconName: 'folder' })}
-      ${statCard({ label: 'أنواع المستندات', value: String(byCategory.length), iconName: 'fileText', tone: 'success' })}
+      ${statCard({ label: 'أنواع المستندات', value: String(byCategory.size), iconName: 'fileText', tone: 'success' })}
       ${statCard({ label: 'الحجم الإجمالي', value: fileSize(totalSize), iconName: 'upload', tone: 'warning' })}
     </div>`;
 }
@@ -307,13 +345,22 @@ function emptyView(session) {
 
 /* ---- Upload ---------------------------------------------------------------- */
 
+/**
+ * Person options for the upload modal. Camp Admin reads the real cache
+ * populated once in init() (a real Camp Admin session's mock ids/camp ids
+ * never match select.personOptions()'s localStorage rows — the person
+ * picker would otherwise render empty or submit a family_member_id the
+ * real documents-upload function can't resolve). Displaced/Super Admin
+ * keep the existing mock lookup.
+ */
 function peopleFor(session) {
+  if (session.role === ROLES.CAMP_ADMIN) return campPeople;
   if (session.role === ROLES.DISPLACED) {
     const person = store.displaced.get(session.displacedId);
     if (!person) return [];
     return select.personOptions({ familyId: person.familyId });
   }
-  return select.personOptions({ campId: session.role === ROLES.CAMP_ADMIN ? session.campId : '' });
+  return select.personOptions({ campId: '' });
 }
 
 function openUploader(session) {
@@ -356,9 +403,31 @@ function openUploader(session) {
       }
 
       const file = files[0];
+      const name = values.name.trim();
+
+      // Camp Admin: the row is real, sourced from getCampDocuments() on the
+      // next load() — no mock mirroring, no localStorage record.
+      if (session.role === ROLES.CAMP_ADMIN) {
+        try {
+          await cloudinary.uploadDocument({
+            file: file.raw,
+            name,
+            category: values.category,
+            familyMemberId: values.displacedId,
+          });
+        } catch (error) {
+          toast.error('تعذر الرفع', error.message || 'حدث خطأ غير متوقع');
+          return;
+        }
+        modal.close('submit');
+        toast.success('تم الرفع', 'تمت إضافة المستند إلى الملف.');
+        load(session);
+        return;
+      }
+
       const person = store.displaced.get(values.displacedId);
       const record = {
-        name: values.name.trim(),
+        name,
         category: values.category,
         displacedId: values.displacedId,
         familyId: person ? person.familyId : '',
@@ -370,15 +439,12 @@ function openUploader(session) {
         uploadedBy: session.id,
       };
 
-      // When a real Supabase session exists, upload through the Cloudinary
-      // Edge Function and mirror the metadata locally (marked with
-      // backendId) so the existing localStorage-driven list/preview/delete
-      // code renders and acts on it exactly as it does any other row —
-      // download and delete route back through the backend for rows that
-      // carry a backendId (see downloadDocument() and the delete handler
-      // above). No page establishes a real session today, so this branch
-      // does not run yet; it is exercised entirely by
-      // supabase/tests/phase3-documents.test.mjs.
+      // Super Admin/displaced sessions are real too since Phase 4.1, but
+      // their list stays mock (out of this phase's scope) — the upload
+      // still mirrors into localStorage, marked with backendId when a real
+      // backend session exists, so download/delete keep routing to the
+      // backend for those rows (see downloadDocument() and the delete
+      // handler above).
       if (await backendAvailable()) {
         try {
           const uploaded = await cloudinary.uploadDocument({
@@ -404,20 +470,23 @@ function openUploader(session) {
 }
 
 function openPreview(row) {
+  const isImage = (row.mime || '').startsWith('image/');
   const modal = openModal({
     title: row.name,
     description: `${row.categoryLabel} · ${fileSize(row.size)} · ${formatDate(row.uploadedAt)}`,
     size: 'lg',
     body: `
-      <div class="u-text-center">
+      <div class="u-text-center" id="preview-body">
         ${
           row.dataUrl
             ? `<img src="${esc(row.dataUrl)}" alt="${esc(row.name)}" style="max-width:100%;border-radius:var(--radius-lg)">`
-            : `<div class="empty">
-                <span class="empty__icon">${icon(row.mime === 'application/pdf' ? 'fileText' : 'image', { size: 28 })}</span>
-                <h3 class="empty__title">لا تتوفر معاينة لهذا الملف</h3>
-                <p class="empty__text">المعاينة متاحة للصور المرفوعة من هذا الجهاز فقط، أما الملفات الكبيرة وملفات PDF فتُحفظ بياناتها دون معاينة في هذا النموذج الأولي.</p>
-              </div>`
+            : row.backendId && isImage
+              ? `<p class="u-text-muted">جارٍ تحميل المعاينة…</p>`
+              : `<div class="empty">
+                  <span class="empty__icon">${icon(row.mime === 'application/pdf' ? 'fileText' : 'image', { size: 28 })}</span>
+                  <h3 class="empty__title">لا تتوفر معاينة لهذا الملف</h3>
+                  <p class="empty__text">المعاينة متاحة للصور فقط، أما ملفات PDF فيمكن تنزيلها لعرضها.</p>
+                </div>`
         }
       </div>
       <div class="u-mt-4">
@@ -438,5 +507,29 @@ function openPreview(row) {
 
   if (row.dataUrl || row.backendId) {
     delegate(modal.element, 'click', '[data-download]', () => downloadDocument(row));
+  }
+
+  // Real, Cloudinary-backed image documents never had a dataUrl to render —
+  // fetch the inline blob through the same secure Edge Function download
+  // already uses (documents-access, mode:'inline') and patch the
+  // placeholder with it. PDFs keep the static "no preview" copy above.
+  if (!row.dataUrl && row.backendId && isImage) {
+    let objectUrl = '';
+    cloudinary
+      .getDocumentBlob(row.backendId, { mode: 'inline' })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        const body = qs('#preview-body', modal.element);
+        if (body) {
+          body.innerHTML = `<img src="${objectUrl}" alt="${esc(row.name)}" style="max-width:100%;border-radius:var(--radius-lg)">`;
+        }
+      })
+      .catch(() => {
+        const body = qs('#preview-body', modal.element);
+        if (body) body.innerHTML = `<p class="u-text-muted">تعذر تحميل المعاينة.</p>`;
+      });
+    modal.onClose(() => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    });
   }
 }
