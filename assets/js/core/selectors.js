@@ -800,6 +800,22 @@ export function organizationInUse(organizationId) {
   return store.aid.exists((record) => record.organizationId === organizationId);
 }
 
+/**
+ * Pure predicate over one real (already camelCase) organization row from
+ * listOrganizationsWithUsage(), independent of the mock searchOrganizations()
+ * above — same split matchesAidFilters()/matchesDocumentFilters()/
+ * matchesRegistrationRequestFilters() use for their real pages.
+ */
+export function matchesOrganizationFilters(row, { query = '' } = {}) {
+  const term = query.trim().toLowerCase();
+  if (!term) return true;
+  return (
+    row.name.toLowerCase().includes(term) ||
+    (row.responsiblePerson || '').toLowerCase().includes(term) ||
+    (row.phone || '').includes(term)
+  );
+}
+
 /* ---- Registration requests ----------------------------------------------- */
 
 /**
