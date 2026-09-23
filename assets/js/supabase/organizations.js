@@ -1,6 +1,6 @@
 // assets/js/supabase/organizations.js
 import { requireClient } from '../core/supabase-client.js';
-import { run, mapError } from './errors.js';
+import { run, mapError, DataAccessError, ErrorType } from './errors.js';
 import { paginate, sort } from './query.js';
 
 const SORT_COLUMNS = ['name', 'created_at'];
@@ -53,4 +53,51 @@ export async function updateOrganization(id, patch) {
 export async function deleteOrganization(id) {
   const client = requireClient();
   await run(client.from('organizations').delete().eq('id', id).select().maybeSingle());
+}
+
+const ORG_SELECT = '*, aid_distributions(id, aid_distribution_families(family_id))';
+
+/**
+ * DB row (with the aid_distributions/aid_distribution_families embed —
+ * both real FKs, so PostgREST embeds them directly, same reason aids.js's
+ * embeds already work without the family_stats-style separate-query
+ * workaround) -> the exact shape resultsView()/summaryView() in
+ * organizations.js already read.
+ *
+ * aidCount/familiesCount are RLS-scoped through the embed, not
+ * platform-wide: a camp_admin's aid_distributions child rows are already
+ * own-camp-scoped by that table's own RLS, so a donor used in more than
+ * one camp shows a smaller count to a Camp Admin than to a Super Admin.
+ * This is the correct, intended behavior (Phase 4.9 spec §4), not a bug.
+ */
+function mapOrganizationRow(row) {
+  const distributions = row.aid_distributions || [];
+  const familyIds = new Set();
+  distributions.forEach((d) => (d.aid_distribution_families || []).forEach((f) => familyIds.add(f.family_id)));
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone || '',
+    responsiblePerson: row.responsible_person || '',
+    createdAt: row.created_at,
+    aidCount: distributions.length,
+    familiesCount: familyIds.size,
+  };
+}
+
+/**
+ * Every donor, unpaginated — donors are a small, platform-wide list, same
+ * "fetch all" convention listOrganizationOptions() already established.
+ */
+export async function listOrganizationsWithUsage() {
+  const client = requireClient();
+  const rows = await run(
+    client.from('organizations').select(ORG_SELECT).order('name', { ascending: true })
+  );
+  return rows.map(mapOrganizationRow);
+}
+
+/** Same pattern as family-members.js's isDuplicateNationalId(). */
+export function isDuplicateOrganizationName(error) {
+  return error instanceof DataAccessError && error.type === ErrorType.DUPLICATE;
 }
