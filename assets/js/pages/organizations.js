@@ -29,8 +29,16 @@ import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
+import {
+  listOrganizationsWithUsage,
+  createOrganization,
+  updateOrganization,
+  deleteOrganization,
+  isDuplicateOrganizationName,
+} from '../supabase/organizations.js';
 
 const state = { q: '' };
+let currentRows = []; // last rendered rows, for the data-edit/data-delete handlers
 
 const shell = await mountShell({ active: 'organizations.html', title: 'المؤسسات' });
 if (shell) init(shell);
@@ -68,14 +76,14 @@ function init({ session, content }) {
 
   delegate(content, 'click', '[data-create]', () => openEditor(session, null));
   delegate(content, 'click', '[data-edit]', (event, node) =>
-    openEditor(session, store.organizations.get(node.dataset.edit))
+    openEditor(session, currentRows.find((r) => r.id === node.dataset.edit))
   );
 
   delegate(content, 'click', '[data-delete]', async (event, node) => {
-    const org = store.organizations.get(node.dataset.delete);
+    const org = currentRows.find((r) => r.id === node.dataset.delete);
     if (!org) return;
 
-    if (select.organizationInUse(org.id)) {
+    if (org.aidCount > 0) {
       toast.error(
         'تعذر الحذف',
         'توجد مساعدات مسجلة باسم هذه الجهة. احذف تلك السجلات أولاً أو انقلها إلى جهة أخرى.'
@@ -89,9 +97,15 @@ function init({ session, content }) {
       confirmLabel: 'حذف',
     });
     if (!ok) return;
-    store.organizations.remove(org.id);
-    toast.success('تم الحذف', 'تم حذف الجهة المانحة.');
-    load(session);
+
+    try {
+      await deleteOrganization(org.id);
+      toast.success('تم الحذف', 'تم حذف الجهة المانحة.');
+      load(session);
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الحذف', error.message || 'حدث خطأ غير متوقع');
+    }
   });
 
   delegate(content, 'click', '[data-clear-search]', () => {
@@ -113,10 +127,11 @@ async function load(session) {
   target.innerHTML = skeletonTable(5);
 
   try {
-    const rows = await store.load(() => select.searchOrganizations({ query: state.q }));
-    target.innerHTML = resultsView(rows);
+    const allRows = await store.load(() => listOrganizationsWithUsage());
+    currentRows = allRows.filter((row) => select.matchesOrganizationFilters(row, { query: state.q }));
+    target.innerHTML = resultsView(currentRows);
     const summary = qs('#summary');
-    if (summary) summary.innerHTML = summaryView(rows);
+    if (summary) summary.innerHTML = summaryView(currentRows);
   } catch (error) {
     console.error(error);
     target.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -223,27 +238,28 @@ function openEditor(session, org) {
 
   bindForm(form, {
     schema: organizationSchema(),
-    onSubmit: (values) => {
+    onSubmit: async (values) => {
       const payload = {
         name: values.name.trim(),
         phone: (values.phone || '').trim(),
         responsiblePerson: (values.responsiblePerson || '').trim(),
       };
 
-      const duplicate = store.organizations.find(
-        (row) => row.name.trim() === payload.name && (!org || row.id !== org.id)
-      );
-      if (duplicate) {
-        toast.error('تعذر الحفظ', 'توجد جهة مسجلة بنفس الاسم.');
-        return;
+      try {
+        if (isNew) await createOrganization(payload);
+        else await updateOrganization(org.id, payload);
+
+        modal.close('submit');
+        toast.success(isNew ? 'تمت الإضافة' : 'تم الحفظ', `تم حفظ بيانات "${payload.name}".`);
+        load(session);
+      } catch (error) {
+        if (isDuplicateOrganizationName(error)) {
+          toast.error('تعذر الحفظ', 'توجد جهة مسجلة بنفس الاسم.');
+          return;
+        }
+        console.error(error);
+        toast.error('تعذر الحفظ', error.message || 'حدث خطأ غير متوقع');
       }
-
-      if (isNew) store.organizations.create(payload);
-      else store.organizations.update(org.id, payload);
-
-      modal.close('submit');
-      toast.success(isNew ? 'تمت الإضافة' : 'تم الحفظ', `تم حفظ بيانات "${payload.name}".`);
-      load(session);
     },
   });
 }
