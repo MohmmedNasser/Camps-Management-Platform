@@ -1028,3 +1028,68 @@ suite instead of by shared code.
   rows are deleted once their assertions finish — verified against the live
   project after the run: zero leftover rows.
 - No `service_role` key or other private credential reaches the browser.
+
+---
+
+## 23 · Phase 4.7 — Registration requests & approval workflow on real data
+
+`registration-requests.html` (list) and `registration-request-details.html`
+(detail + decide) — both already Camp-Admin-only in `PAGE_ACCESS` — now
+read and write real data with **no mock branch**, matching
+`family-create.html`/`aid-create.html` before them.
+
+- **Source:** `getCampRegistrationRequests(campId)` (new) — every request
+  in the caller's own camp, unpaginated, same convention as
+  `getCampFamilies()`/`getCampDisplacedPersons()`/`getCampAidDistributions()`.
+  Client-side search/status-filter/pagination on that result, via the new
+  pure `selectors.matchesRegistrationRequestFilters()`.
+- **Camp scope:** `session.campId` only; RLS
+  (`registration_requests_select_scoped`) is the actual boundary regardless
+  of what the client sends.
+- **Approve/reject:** unchanged RPCs (`approve_registration_request`,
+  `reject_registration_request`, built in Phase 4.1), called through the
+  existing `approveRegistrationRequest()`/`rejectRegistrationRequest()`
+  wrappers — never a raw `.update()`, even though
+  `registration_requests_update_camp_admin` would technically permit one.
+  The approve dialog now collects gender + birth date (the RPC's
+  parameters) — the request itself carries neither.
+- **Status handling:** the database `request_status` enum
+  (pending/approved/rejected) is the only source of truth; no
+  frontend-only status.
+- **Duplicate detection:** pre-approval check is necessarily own-camp-only
+  (`findOwnCampDuplicate()`, scoped by `family_members` RLS); a cross-camp
+  duplicate is still caught by the database's global unique index at
+  approval time (`23505` → the existing `DUPLICATE` mapping).
+- **`getRegistrationRequest()`** changed from `.single()` to
+  `.maybeSingle()` for consistency with every other real "get one" function
+  (`getFamilyByReferenceCode`, `getDisplacedPerson`, `getAidDistribution`),
+  so a nonexistent/other-camp id renders the page's own empty state instead
+  of the generic error state. A request with **no `id` in the query string
+  at all** still renders the generic error state, not the empty one —
+  `.eq('id', undefined)` fails PostgREST-side before `maybeSingle()` can
+  return a clean `null`, the same failure mode as a malformed UUID.
+  Verified live; every other real "get one by id" page in this codebase has
+  the identical unguarded pattern, so this is pre-existing and consistent,
+  not a Phase 4.7 regression.
+- **Badges:** the Camp Admin dashboard's "طلبات التسجيل" stat card and
+  recent-requests panel were already real (Phase 4.3); this phase's
+  detail-page fix makes their links resolve instead of 404ing. The sidebar
+  nav badge (`ui/layout.js`, `pendingRequestCount()`) stays mock — see
+  "Remaining mock behavior" below.
+- **Tests:** `supabase/tests/phase4.7-camp-isolation.test.mjs` (RLS +
+  cross-camp RPC rejection, via a throwaway camp-الرحمة fixture since no
+  seed data exists there) and
+  `supabase/tests/phase4.7-registration-requests-verification.test.mjs`
+  (list/search/filter counts, detail fields, full approve/reject round
+  trips, own-camp duplicate detection — all verified against an
+  independent service-role client, never importing the app's own
+  data-access module). Both suites' fixtures are deleted in `finally`
+  blocks via a service-role client — `registration_requests` has no
+  client-reachable `DELETE` policy for any authenticated role, so cleanup
+  cannot go through the app's own permissions.
+- **Remaining mock behavior:** `ui/layout.js`'s `pendingRequests` nav badge
+  (shared by every role's page shell — out of this phase's scope, see the
+  Phase 4.7 spec §6/§9). `families.js`'s `deleteFamily()` has no guard
+  against the `registration_requests_approved_has_member` CHECK firing when
+  deleting a family that originated from an approved request (pre-existing
+  since Phase 4.1/4.4, not introduced here — spec §9).
