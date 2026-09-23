@@ -126,6 +126,7 @@ async function init({ session, content }) {
   state.campId = query.campId || '';
 
   if (session.role === ROLES.CAMP_ADMIN) {
+    content.innerHTML = skeletonTable(5);
     campPeople = (await getCampDisplacedPersons(session.campId)).map((p) => ({ value: p.id, label: p.fullName }));
   }
 
