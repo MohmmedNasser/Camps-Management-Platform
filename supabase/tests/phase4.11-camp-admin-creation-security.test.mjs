@@ -219,6 +219,20 @@ test('Phase 4.11 admin-create-camp-admin: authorization boundary', async (t) => 
     assert.equal(res.status, 400);
   });
 
+  await t.test('a valid-JSON but non-object body (null) is rejected with a clean validation error, not a 500', async () => {
+    const token = await signInToken('super@camps.ps', '123456');
+    for (const payload of ['null', '42', '"a string"', '[]']) {
+      const res = await fetch(FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: `Bearer ${token}` },
+        body: payload,
+      });
+      const json = await res.json().catch(() => null);
+      assert.equal(res.status, 400, `payload ${payload} must be rejected with 400, got ${res.status}: ${JSON.stringify(json)}`);
+      assert.equal(json?.error?.code, 'validation', `payload ${payload} must map to a validation error, got: ${JSON.stringify(json)}`);
+    }
+  });
+
   await t.test('OPTIONS preflight succeeds without authentication', async () => {
     const res = await fetch(FUNCTION_URL, { method: 'OPTIONS' });
     assert.ok(res.status < 300, `OPTIONS must succeed, got ${res.status}`);

@@ -59,12 +59,16 @@ Deno.serve(async (req: Request) => {
     return errorResponse(403, 'forbidden', GENERIC_FORBIDDEN);
   }
 
-  let body: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    body = await req.json();
+    parsed = await req.json();
   } catch {
     return errorResponse(400, 'validation', 'طلب غير صالح');
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return errorResponse(400, 'validation', 'طلب غير صالح');
+  }
+  const body = parsed as Record<string, unknown>;
 
   const fullName = String(body.fullName ?? '').trim();
   const email = String(body.email ?? '').trim().toLowerCase();
