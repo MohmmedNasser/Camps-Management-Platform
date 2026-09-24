@@ -135,7 +135,11 @@ test('Phase 4.10 camps DB-vs-UI verification', async (t) => {
         await page.waitForSelector('table, .empty', { timeout: 30000 });
         await page.fill('#toolbar-search', 'اختبار البحث الفريد');
         await page.keyboard.press('Enter');
-        await page.waitForTimeout(1500);
+        // load() re-fetches listCampsWithStats() (a full camps+per-camp-stats
+        // round trip) on every search change — poll for the result count
+        // to settle to 1 rather than a fixed sleep, which flaked under
+        // contention in the sibling camp-admins suite for the same reason.
+        await page.waitForFunction(() => document.querySelectorAll('tbody tr').length === 1, { timeout: 15000 });
         const bodyText = await page.locator('body').innerText();
         assert.ok(bodyText.includes(fixture.name), `expected "${fixture.name}" in filtered results`);
         await page.close();

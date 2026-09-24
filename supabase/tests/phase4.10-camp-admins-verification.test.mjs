@@ -149,12 +149,15 @@ test('Phase 4.10 camp-admins DB-vs-UI verification', async (t) => {
       await login(page, base, EMAIL, PASSWORD);
 
       // search by name — the debounced 'input' handler (250ms) does the
-      // filtering; no Enter press needed (and none sent, to isolate this
-      // from the native 'search' event some browsers fire on Enter).
+      // filtering, then a full load() re-fetch (the RPC + per-camp stats)
+      // runs before the table re-renders. Poll instead of a fixed sleep:
+      // under load the re-fetch can take longer than any fixed timeout
+      // would reliably cover (this flaked once at ~6.4s under contention
+      // from other suites running in the same `test:all` pass).
       await page.goto(`${base}/pages/camp-admins.html`, { waitUntil: 'load' });
       await page.waitForSelector('table, .empty', { timeout: 30000 });
       await page.fill('#toolbar-search', 'رائد المصري');
-      await page.waitForTimeout(1200);
+      await page.waitForFunction(() => document.querySelectorAll('tbody tr').length === 1, { timeout: 15000 });
       let bodyText = await page.locator('body').innerText();
       assert.ok(bodyText.includes('رائد المصري'), 'search by name must find رائد المصري');
       const rowCount = await page.locator('tbody tr').count();
