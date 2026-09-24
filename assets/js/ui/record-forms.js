@@ -668,6 +668,9 @@ export function campAdminFields(values = {}, { camps = [], isNew = true } = {}) 
         type: 'email',
         value: values.email,
         required: true,
+        ...(isNew
+          ? {}
+          : { hint: 'لا يمكن تغيير البريد الإلكتروني من هنا.', attrs: 'disabled aria-readonly="true"' }),
       }),
       inputField({
         name: 'phone',
