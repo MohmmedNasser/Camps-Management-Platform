@@ -31,8 +31,8 @@ import * as select from '../core/selectors.js';
 import { ROLES, AID_TYPES, PAGE_SIZE } from '../core/config.js';
 import { AID_COLUMNS, aidExportRow } from '../core/exports.js';
 import { exportSheet, timestampedName } from '../utils/xlsx.js';
-import { getCampAidDistributions, deleteAidDistribution } from '../supabase/aids.js';
-import { getCampFamilyOptions } from '../supabase/families.js';
+import { getCampAidDistributions, deleteAidDistribution, getFamilyAidDistributions } from '../supabase/aids.js';
+import { getCampFamilyOptions, getOwnFamily } from '../supabase/families.js';
 import { listOrganizationOptions } from '../supabase/organizations.js';
 
 const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
@@ -44,6 +44,12 @@ const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
 // initToolbar()'s getFilters callback), so the real option lists are
 // fetched once here rather than inline in filterSpec().
 const campAdminOptions = { organizations: [], families: [] };
+
+// Populated once, before the first render, for a real displaced session —
+// same reasoning as campAdminOptions above: filterSpec() must stay
+// synchronous, so the real organization list is fetched once here.
+let ownOrganizations = [];
+let ownFamily = null;
 
 const shell = await mountShell({ active: 'aid.html', title: 'المساعدات' });
 if (shell) init(shell);
@@ -75,7 +81,7 @@ function filterSpec(session) {
     {
       name: 'organizationId',
       label: 'الجهة المانحة',
-      options: isCampAdmin ? campAdminOptions.organizations : select.organizationOptions(),
+      options: isCampAdmin ? campAdminOptions.organizations : isOwn ? ownOrganizations : select.organizationOptions(),
       value: state.organizationId,
     },
     ...(isOwn
@@ -101,6 +107,11 @@ async function init({ session, content }) {
     ]);
     campAdminOptions.organizations = organizations;
     campAdminOptions.families = families;
+  } else if (session.role === ROLES.DISPLACED) {
+    content.innerHTML = skeletonTable(6);
+    const [organizations, family] = await Promise.all([listOrganizationOptions(), getOwnFamily(session)]);
+    ownOrganizations = organizations;
+    ownFamily = family;
   }
 
   renderPage(session, content);
@@ -244,27 +255,35 @@ async function load(session) {
  * (Phase 4.6, same split Phase 4.4/4.5 used for families/displaced).
  */
 async function collect(session) {
-  if (session.role !== ROLES.CAMP_ADMIN) {
-    return select.searchAid({
-      query: state.q,
-      type: state.type,
-      organizationId: state.organizationId,
-      familyId: state.familyId,
-      scope: select.scopeFilter(session),
-    });
+  if (session.role === ROLES.CAMP_ADMIN) {
+    const rows = await getCampAidDistributions(session.campId);
+    return rows
+      .map((row) => ({ ...row, campName: session.campLabel }))
+      .filter((row) =>
+        select.matchesAidFilters(row, {
+          query: state.q,
+          type: state.type,
+          organizationId: state.organizationId,
+          familyId: state.familyId,
+        })
+      );
   }
 
-  const rows = await getCampAidDistributions(session.campId);
-  return rows
-    .map((row) => ({ ...row, campName: session.campLabel }))
-    .filter((row) =>
-      select.matchesAidFilters(row, {
-        query: state.q,
-        type: state.type,
-        organizationId: state.organizationId,
-        familyId: state.familyId,
-      })
-    );
+  if (session.role === ROLES.DISPLACED) {
+    if (!ownFamily) return [];
+    const rows = await getFamilyAidDistributions(ownFamily._dbId);
+    return rows
+      .map((row) => ({ ...row, campName: session.campLabel }))
+      .filter((row) => select.matchesAidFilters(row, { query: state.q, type: state.type, organizationId: state.organizationId }));
+  }
+
+  return select.searchAid({
+    query: state.q,
+    type: state.type,
+    organizationId: state.organizationId,
+    familyId: state.familyId,
+    scope: select.scopeFilter(session),
+  });
 }
 
 /* ---- Excel export --------------------------------------------------------- */
