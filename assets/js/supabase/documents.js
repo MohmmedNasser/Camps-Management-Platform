@@ -105,3 +105,19 @@ export async function getCampDocuments(campId) {
   );
   return rows.map(mapDocumentRow);
 }
+
+/**
+ * Every document belonging to one family, unpaginated — the real
+ * displaced-person document list (Phase 4.13), structural sibling of
+ * getCampDocuments() above (same DOCUMENT_SELECT, same mapDocumentRow).
+ * RLS (documents_select_scoped's `is_displaced() AND family_id =
+ * current_family_id()` clause) independently scopes every row to the
+ * caller's own family regardless of the familyId argument.
+ */
+export async function getFamilyDocuments(familyId) {
+  const client = requireClient();
+  const rows = await run(
+    client.from('documents').select(DOCUMENT_SELECT).eq('family_id', familyId).order('created_at', { ascending: false })
+  );
+  return rows.map(mapDocumentRow);
+}

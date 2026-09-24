@@ -29,6 +29,13 @@ export async function markNotificationRead(id) {
   );
 }
 
+export async function markNotificationUnread(id) {
+  const client = requireClient();
+  return run(
+    client.from('notifications').update({ is_read: false, read_at: null }).eq('id', id).select().single()
+  );
+}
+
 export async function markAllNotificationsRead() {
   const client = requireClient();
   const userId = await currentUserId();

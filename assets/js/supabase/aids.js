@@ -179,6 +179,31 @@ export async function getCampAidDistributions(campId) {
 }
 
 /**
+ * Every aid distribution the signed-in displaced account's own family
+ * received (Phase 4.13) — the real "مساعداتي" list/summary/filter query,
+ * structural sibling of getCampAidDistributions() above (same
+ * DISTRIBUTION_SELECT, same mapAidDistributionRow), so
+ * select.matchesAidFilters() (Phase 4.6) works unmodified against either
+ * one's rows. No campId/familyId filter is applied at the query level: RLS
+ * (aid_distributions_select_scoped's `is_displaced() AND
+ * private.family_receives_distribution(id)` clause) already returns only
+ * the caller's own family's distributions, and the nested
+ * aid_distribution_families embed is independently RLS-scoped per row too
+ * (aid_distribution_families_select_scoped), so a shared distribution's
+ * OTHER beneficiary families never appear in `beneficiaries`/`familyDbIds`
+ * here — a displaced viewer must not learn who else received the same aid.
+ * familyDbId is kept for symmetry with getCampAidDistributions(campId) and
+ * as a redundant, UX-only narrowing — never the security boundary.
+ */
+export async function getFamilyAidDistributions(familyDbId) {
+  const client = requireClient();
+  const rows = await run(
+    client.from('aid_distributions').select(DISTRIBUTION_SELECT).order('distributed_on', { ascending: false })
+  );
+  return rows.map(mapAidDistributionRow).filter((row) => row.familyDbIds.includes(familyDbId));
+}
+
+/**
  * One aid distribution by id. Returns null for a nonexistent id or one RLS
  * hides (another camp) — both look identical from here, same convention as
  * `families.js`'s `getFamilyByReferenceCode()`.

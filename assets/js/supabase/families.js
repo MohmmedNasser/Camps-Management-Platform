@@ -2,6 +2,7 @@
 import { requireClient } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
 import { paginate, sort } from './query.js';
+import { getDisplacedPerson } from './family-members.js';
 
 const SORT_COLUMNS = ['created_at', 'reference_code', 'updated_at'];
 
@@ -164,6 +165,20 @@ export async function getFamilyByReferenceCode(referenceCode) {
     orphansCount: Number(stats?.orphans) || 0,
     members,
   };
+}
+
+/**
+ * The signed-in displaced account's own family, resolved through the
+ * Phase 4.12 identity chain (profiles.family_member_id -> family_members ->
+ * families) — never a URL or localStorage value. Null when the account has
+ * no family_member_id yet, or the linked family_member row has no family
+ * (both states getDisplacedDashboard() already handles identically).
+ */
+export async function getOwnFamily(session) {
+  if (!session?.familyMemberId) return null;
+  const person = await getDisplacedPerson(session.familyMemberId);
+  if (!person || !person.familyId) return null;
+  return getFamilyByReferenceCode(person.familyId);
 }
 
 /**

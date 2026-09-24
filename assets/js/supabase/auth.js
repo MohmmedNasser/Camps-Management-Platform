@@ -26,6 +26,12 @@ export async function signOut() {
   if (error) throw mapAuthError(error);
 }
 
+export async function updatePassword(newPassword) {
+  const client = requireClient();
+  const { error } = await client.auth.updateUser({ password: newPassword });
+  if (error) throw mapAuthError(error);
+}
+
 export async function getSession() {
   const client = requireClient();
   const { data, error } = await client.auth.getSession();
