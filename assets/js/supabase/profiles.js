@@ -47,3 +47,37 @@ export async function setProfileStatus(profileId, status) {
   const client = requireClient();
   return run(client.from('profiles').update({ status }).eq('id', profileId).select().single());
 }
+
+/** Super Admin only (RLS-checked inside the function, Phase 4.10): camp
+ *  admins with their auth email, which `profiles` itself does not carry. */
+export async function listCampAdminAccounts() {
+  const client = requireClient();
+  const rows = await run(client.rpc('get_camp_admin_accounts'));
+  return rows.map((row) => ({
+    id: row.id,
+    fullName: row.full_name,
+    email: row.email,
+    phone: row.phone || '',
+    campId: row.camp_id,
+    campName: row.camp_name || '—',
+    status: row.status,
+    createdAt: row.created_at,
+  }));
+}
+
+/** Super Admin editing ANOTHER profile's name/phone (updateOwnProfile()
+ *  only ever targets currentUserId()). RLS: profiles_update_own_or_admin. */
+export async function updateProfile(id, { fullName, phone }) {
+  const client = requireClient();
+  return run(
+    client.from('profiles').update({ full_name: fullName, phone: phone || null }).eq('id', id).select().single()
+  );
+}
+
+/** RLS: profiles_delete_super_admin. FK-safe by design — every FK
+ *  referencing profiles(id) is ON DELETE SET NULL/CASCADE, never
+ *  RESTRICT (verified live against the project's constraint list). */
+export async function deleteProfile(id) {
+  const client = requireClient();
+  await run(client.from('profiles').delete().eq('id', id).select().maybeSingle());
+}

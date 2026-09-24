@@ -4,6 +4,12 @@
  * The Camp Admin *is* the camp representative — the platform has no separate
  * representative record or name field. There is exactly one Super Admin, so
  * this page never creates one.
+ *
+ * Creating a brand-new admin account is deferred: it needs a privileged
+ * Auth-user-creation step (service_role, via a secure Edge Function) that
+ * does not exist yet — see docs/superpowers/specs/2026-08-19-phase-4.10-
+ * camps-camp-admins-design.md §1.3/§4. The "إضافة مسؤول" button stays, but
+ * opens an explanation instead of the create form.
  */
 
 import { qs, delegate, params, setParams } from '../utils/dom.js';
@@ -29,17 +35,22 @@ import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
-import { ROLES, STATUS, STATUS_LABELS } from '../core/config.js';
+import { STATUS, STATUS_LABELS } from '../core/config.js';
+import { listCampAdminAccounts, updateProfile, deleteProfile, assignCampAdmin, setProfileStatus } from '../supabase/profiles.js';
+import { listCampsWithStats, listCampOptions } from '../supabase/camps.js';
 
-const state = { q: '', campId: '', status: '' };
+const state = { q: '', campId: '', status: '', campOptions: [] };
+let currentRows = []; // last rendered rows, for the data-edit/data-toggle/data-delete handlers
 
 const shell = await mountShell({ active: 'camp-admins.html', title: 'مسؤولو المخيمات' });
 if (shell) init(shell);
 
-/** Rebuilt fresh on every call so the sheet never shows stale values. */
+/** Rebuilt fresh on every call so the sheet never shows stale values.
+ *  toolbar.js's getFilters() is called synchronously, so campOptions is
+ *  fetched once in init() and cached in state rather than fetched here. */
 function filterSpec() {
   return [
-    { name: 'campId', label: 'المخيم', options: select.campOptions(), value: state.campId },
+    { name: 'campId', label: 'المخيم', options: state.campOptions, value: state.campId },
     {
       name: 'status',
       label: 'حالة الحساب',
@@ -52,11 +63,20 @@ function filterSpec() {
   ];
 }
 
-function init({ session, content }) {
+async function init({ session, content }) {
   const query = params();
   state.q = query.q || '';
   state.campId = query.campId || '';
   state.status = query.status || '';
+
+  content.innerHTML = skeletonTable(4);
+
+  try {
+    state.campOptions = await listCampOptions();
+  } catch (error) {
+    console.error(error);
+    state.campOptions = [];
+  }
 
   content.innerHTML = `
     ${pageHeader({
@@ -93,36 +113,58 @@ function init({ session, content }) {
     getFilters: () => filterSpec(),
   });
 
-  delegate(content, 'click', '[data-create]', () => openEditor(session, null));
+  delegate(content, 'click', '[data-create]', () => {
+    openModal({
+      title: 'إضافة مسؤول مخيم',
+      body: alert({
+        variant: 'warning',
+        title: 'هذه الميزة غير متاحة بعد',
+        text: 'إنشاء حساب مسؤول جديد يتطلب إنشاء حساب مصادقة، وهي عملية لا يمكن تنفيذها بأمان من المتصفح حالياً. يمكنك تعديل بيانات المسؤولين الحاليين أو تفعيل/تعطيل حساباتهم أو حذفها.',
+      }),
+      footer: button({ label: 'حسناً', variant: 'primary', attrs: 'data-close' }),
+    });
+  });
+
   delegate(content, 'click', '[data-edit]', (event, node) =>
-    openEditor(session, store.users.get(node.dataset.edit))
+    openEditor(session, currentRows.find((row) => row.id === node.dataset.edit))
   );
 
-  delegate(content, 'click', '[data-toggle]', (event, node) => {
-    const user = store.users.get(node.dataset.toggle);
+  delegate(content, 'click', '[data-toggle]', async (event, node) => {
+    const user = currentRows.find((row) => row.id === node.dataset.toggle);
     if (!user) return;
     const next = user.status === STATUS.ACTIVE ? STATUS.DISABLED : STATUS.ACTIVE;
-    store.users.update(user.id, { status: next });
-    toast.success(
-      next === STATUS.ACTIVE ? 'تم التفعيل' : 'تم التعطيل',
-      `${user.name}: ${next === STATUS.ACTIVE ? 'يمكنه الدخول الآن.' : 'لن يتمكن من تسجيل الدخول.'}`
-    );
-    load(session);
+    try {
+      await setProfileStatus(user.id, next);
+      toast.success(
+        next === STATUS.ACTIVE ? 'تم التفعيل' : 'تم التعطيل',
+        `${user.fullName}: ${next === STATUS.ACTIVE ? 'يمكنه الدخول الآن.' : 'لن يتمكن من تسجيل الدخول.'}`
+      );
+      load(session);
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر التنفيذ', error.message || 'حدث خطأ غير متوقع');
+    }
   });
 
   delegate(content, 'click', '[data-delete]', async (event, node) => {
-    const user = store.users.get(node.dataset.delete);
+    const user = currentRows.find((row) => row.id === node.dataset.delete);
     if (!user) return;
 
     const ok = await confirmDialog({
       title: 'حذف حساب المسؤول',
-      text: `سيتم حذف حساب "${user.name}". تبقى بيانات المخيم وسجلاته كما هي.`,
+      text: `سيتم حذف حساب "${user.fullName}". تبقى بيانات المخيم وسجلاته كما هي.`,
       confirmLabel: 'حذف الحساب',
     });
     if (!ok) return;
-    select.removeCampAdmin(user.id);
-    toast.success('تم الحذف', 'تم حذف حساب المسؤول.');
-    load(session);
+
+    try {
+      await deleteProfile(user.id);
+      toast.success('تم الحذف', 'تم حذف حساب المسؤول.');
+      load(session);
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الحذف', error.message || 'حدث خطأ غير متوقع');
+    }
   });
 
   delegate(content, 'click', '[data-clear-search]', () => {
@@ -144,13 +186,22 @@ async function load(session) {
   target.innerHTML = skeletonTable(4);
 
   try {
-    const rows = await store.load(() =>
-      select.campAdminRows({ query: state.q, campId: state.campId, status: state.status })
+    const [accounts, breakdown] = await store.load(() =>
+      Promise.all([listCampAdminAccounts(), listCampsWithStats()])
     );
-    target.innerHTML = resultsView(rows);
+    const breakdownById = new Map(breakdown.map((camp) => [camp.id, camp]));
+    const allRows = accounts.map((row) => ({
+      ...row,
+      displacedCount: breakdownById.get(row.campId)?.displacedCount || 0,
+    }));
+    currentRows = allRows.filter((row) =>
+      select.matchesCampAdminFilters(row, { query: state.q, campId: state.campId, status: state.status })
+    );
+
+    target.innerHTML = resultsView(currentRows);
 
     const summary = qs('#summary');
-    if (summary) summary.innerHTML = summaryView();
+    if (summary) summary.innerHTML = summaryView(allRows, breakdown);
   } catch (error) {
     console.error(error);
     target.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -158,15 +209,13 @@ async function load(session) {
   }
 }
 
-function summaryView() {
-  const all = select.campAdminRows();
-  const active = all.filter((user) => user.status === STATUS.ACTIVE).length;
-  const camps = select.campBreakdown();
-  const uncovered = camps.filter((camp) => camp.adminsCount === 0);
+function summaryView(allRows, breakdown) {
+  const active = allRows.filter((user) => user.status === STATUS.ACTIVE).length;
+  const uncovered = breakdown.filter((camp) => camp.adminsCount === 0);
 
   return `
     <div class="grid grid--3 u-mb-5">
-      ${statCard({ label: 'عدد المسؤولين', value: formatNumber(all.length), iconName: 'shield' })}
+      ${statCard({ label: 'عدد المسؤولين', value: formatNumber(allRows.length), iconName: 'shield' })}
       ${statCard({ label: 'حسابات نشطة', value: formatNumber(active), iconName: 'userCheck', tone: 'success' })}
       ${statCard({
         label: 'مخيمات بلا مسؤول',
@@ -198,7 +247,7 @@ function resultsView(rows) {
   }
 
   const columns = [
-    { key: 'name', label: 'المسؤول', primary: true, cell: (row) => cellMain(row.name, row.email) },
+    { key: 'name', label: 'المسؤول', primary: true, cell: (row) => cellMain(row.fullName, row.email) },
     { key: 'email', label: 'البريد الإلكتروني' },
     { key: 'phone', label: 'الهاتف', cell: (row) => cellMono(formatPhone(row.phone)) },
     { key: 'campName', label: 'المخيم' },
@@ -218,17 +267,17 @@ function resultsView(rows) {
           },
           can('campAdmin:manage') && {
             iconName: 'edit',
-            title: `تعديل ${row.name}`,
+            title: `تعديل ${row.fullName}`,
             attrs: `data-edit="${row.id}"`,
           },
           can('campAdmin:manage') && {
             iconName: row.status === STATUS.ACTIVE ? 'ban' : 'power',
-            title: row.status === STATUS.ACTIVE ? `تعطيل ${row.name}` : `تفعيل ${row.name}`,
+            title: row.status === STATUS.ACTIVE ? `تعطيل ${row.fullName}` : `تفعيل ${row.fullName}`,
             attrs: `data-toggle="${row.id}"`,
           },
           can('campAdmin:manage') && {
             iconName: 'trash',
-            title: `حذف ${row.name}`,
+            title: `حذف ${row.fullName}`,
             variant: 'danger',
             attrs: `data-delete="${row.id}"`,
           },
@@ -243,60 +292,43 @@ function resultsView(rows) {
 
 /* ---- Editor dialog --------------------------------------------------------- */
 
+/** Edit only — creating a new admin is deferred (see the module header and
+ *  the `[data-create]` handler above, which never calls this with a null user). */
 function openEditor(session, user) {
-  const isNew = !user;
-  const camps = select.campOptions();
-
-  if (isNew && !camps.length) {
-    toast.error('تعذر الإضافة', 'أضف مخيماً واحداً على الأقل قبل تعيين مسؤول.');
-    return;
-  }
+  if (!user) return;
 
   const modal = openModal({
-    title: isNew ? 'إضافة مسؤول مخيم' : `تعديل ${user.name}`,
+    title: `تعديل ${user.fullName}`,
     description: 'حساب إدارة مخيم واحد. مسؤول المخيم هو مندوبه المعتمد.',
     size: 'lg',
-    body: `<form class="form" id="admin-form" novalidate>${campAdminFields(user || {}, { camps, isNew })}</form>`,
+    body: `<form class="form" id="admin-form" novalidate>${campAdminFields(
+      { ...user, name: user.fullName },
+      { camps: state.campOptions, isNew: false }
+    )}</form>`,
     footer: `
       ${button({ label: 'إلغاء', variant: 'secondary', attrs: 'data-close' })}
-      ${button({ label: isNew ? 'إضافة' : 'حفظ', variant: 'primary', type: 'submit', attrs: 'form="admin-form"' })}`,
+      ${button({ label: 'حفظ', variant: 'primary', type: 'submit', attrs: 'form="admin-form"' })}`,
   });
 
   const form = qs('#admin-form', modal.element);
 
   bindForm(form, {
-    schema: campAdminSchema({
-      isNew,
-      isDuplicateEmail: (value) =>
-        store.users.exists(
-          (row) =>
-            row.email.toLowerCase() === String(value).trim().toLowerCase() &&
-            (!user || row.id !== user.id)
-        ),
-    }),
-    onSubmit: (values) => {
-      const payload = {
-        name: values.name.trim(),
-        email: values.email.trim(),
-        phone: values.phone.trim(),
-        campId: values.campId,
-        status: values.status,
-        role: ROLES.CAMP_ADMIN,
-      };
+    schema: campAdminSchema({ isNew: false, isDuplicateEmail: () => false }),
+    onSubmit: async (values) => {
+      const payload = { fullName: values.name.trim(), phone: values.phone.trim() };
 
-      if (isNew) {
-        store.users.create({
-          ...payload,
-          password: values.password,
-          createdAt: new Date().toISOString(),
-        });
-      } else {
-        store.users.update(user.id, payload);
+      try {
+        await updateProfile(user.id, payload);
+        if (values.campId !== user.campId) await assignCampAdmin(user.id, values.campId);
+        if (values.status !== user.status) await setProfileStatus(user.id, values.status);
+
+        modal.close('submit');
+        toast.success('تم الحفظ', `تم حفظ حساب "${payload.fullName}".`);
+        load(session);
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الحفظ', error.message || 'حدث خطأ غير متوقع');
       }
-
-      modal.close('submit');
-      toast.success(isNew ? 'تمت الإضافة' : 'تم الحفظ', `تم حفظ حساب "${payload.name}".`);
-      load(session);
     },
   });
 }

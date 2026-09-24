@@ -1276,3 +1276,140 @@ any table wired so far).
   empty-result case). Both suites' fixtures are deleted in `finally`;
   verified live to leave the table at exactly its original 7 seeded rows.
 - No `service_role` key or other private credential reaches the browser.
+
+## 26 · Phase 4.10 — Super Admin camps & camp admins on real data
+
+`assets/js/pages/camps.js` and `camp-admins.js` now read/write real data —
+the last two Super Admin management pages. Both are Super-Admin-only in
+`PAGE_ACCESS`, so both go fully real with no mock branch left behind at all,
+the same end-state Phase 4.9 reached for `organizations.html`.
+
+- **One schema change, and only one: `public.get_camp_admin_accounts()`.**
+  `profiles` has no `email` column — it lives only in `auth.users`, which
+  the publishable key cannot read directly — so a `SECURITY DEFINER`
+  function, internally checking `private.is_super_admin()` and raising
+  `42501` for anyone else, is the one safe way to list camp admins with
+  their login email. Same shape as every other privileged RPC in this
+  project (`get_dashboard_statistics`, `approve_registration_request`, …).
+  Migration: `supabase/migrations/20260819000000_phase4_10_camp_admin_accounts.sql`.
+  `get_advisors` confirms exactly one new, expected
+  `authenticated_security_definer_function_executable` WARN (6 total, up
+  from 5) — no other finding, before or after.
+- **Real, previously-latent bug found and fixed while first calling the new
+  function from an authenticated browser session:** `auth.users.email` is
+  `character varying(255)`, not `text`; the function's declared return
+  column was `text`, so PostgREST rejected every call with `42804`
+  ("structure of query does not match function result type"), surfaced to
+  the browser as a generic 400. Fixed by casting (`u.email::text`) and
+  reapplied live before any frontend code was written against it.
+- **Source, camps:** `listCampsWithStats()` (new, in
+  `assets/js/supabase/camps.js`) composes `listCamps()` +
+  `getDashboardStatistics(camp.id)` + `listProfiles({role:'camp_admin',
+  campId})` — moved here from `dashboard.js`'s private `buildCampBreakdown()`
+  (Phase 4.2), which now calls this instead, so the Super Admin dashboard's
+  per-camp breakdown and the camps page share one implementation instead of
+  two. Re-verified against `supabase/tests/phase4.2-dashboard-verification.test.mjs`
+  after the refactor — still matches independent DB counts. Also new:
+  `listCampOptions()`, `deleteCamp()`, `isDuplicateCampName()`
+  (`camps_name_key` is a pre-existing unique functional index on
+  `lower(btrim(name))`, same pattern as Phase 4.9's organizations).
+- **Source, camp admins:** `listCampAdminAccounts()` (new, in
+  `assets/js/supabase/profiles.js`) wraps the new RPC. Client-side search
+  via the new pure `selectors.matchesCampAdminFilters()`, same convention
+  as `matchesOrganizationFilters()`/`matchesDocumentFilters()`/
+  `matchesRegistrationRequestFilters()`/`matchesAidFilters()`. Also new:
+  `updateProfile(id, {fullName, phone})` (Super Admin editing *another*
+  profile — `updateOwnProfile()` only ever targets `currentUserId()`) and
+  `deleteProfile()`. Camp (re)assignment and status changes on an existing
+  admin reuse the already-real, already-built `assignCampAdmin()`/
+  `setProfileStatus()` from earlier phases — called individually, only when
+  that specific field actually changed, rather than one combined write.
+- **Real bug found and fixed by the camp-admins verification suite's search
+  case:** the page's `load()` passed `state` directly to
+  `matchesCampAdminFilters()`, but `state` keys its search term `q` (matching
+  `params()`/`setParams()` everywhere else in the app) while the selector —
+  correctly, matching its siblings — destructures `{query}`. The mismatched
+  key meant `query` was always `undefined → ''`, so the search box silently
+  filtered nothing. Fixed at the call site (`{query: state.q, campId:
+  state.campId, status: state.status}`), not by changing the selector's
+  signature, to keep it consistent with its three siblings.
+- **Camp deletion:** a fast client-side pre-check reads the row's own
+  already-fetched `displacedCount`/`familiesCount`/`adminsCount` (same
+  pattern as Phase 4.9's `aidCount` check), falling back to the database's
+  `ON DELETE RESTRICT` (on `profiles`/`families`/`family_members`/
+  `aid_distributions`/`registration_requests`/`documents`, all confirmed
+  live) as the backstop for what the fast check can't see — a camp with
+  zero counted records but a stray `registration_requests` row, for
+  instance. Both paths show the same friendly "تعذر الحذف" message; the
+  verification suite specifically constructs a fixture that only the
+  backstop can catch, to prove that path independently of the fast one.
+- **Camp-admin deletion is FK-safe by construction, not by a special-cased
+  check.** Every foreign key referencing `profiles.id` (`families.created_by`,
+  `family_members.created_by`, `aid_distributions.created_by`,
+  `documents.uploaded_by`, `registration_requests.reviewed_by`) is `ON
+  DELETE SET NULL`; `messages.sender_id`/`notifications.recipient_id`/
+  `user_preferences.user_id` are `CASCADE` (a user's own inbox/prefs).
+  Deleting a `profiles` row therefore never fails on a foreign key — it just
+  leaves the underlying `auth.users` row without a profile, which
+  `router.js`'s existing `guard()` already handles gracefully (redirects to
+  `auth-error.html` on `ProfileError('missing')`, built in Phase 4.1, never
+  touched by this phase).
+- **Camp-admin email is read-only on edit.** `ui/record-forms.js`'s
+  `campAdminFields()` renders the email input `disabled` (with a hint)
+  whenever `isNew` is false — changing another user's Auth login email is
+  itself a privileged Admin API operation, same class of problem as
+  creation (below), so it isn't attempted.
+- **"Create a new Camp Admin account" is deferred — not implemented, not
+  faked.** `list_edge_functions` shows exactly 3 functions in this project
+  (`documents-upload`/`documents-access`/`documents-delete`, all
+  Cloudinary); there is no privileged Auth-user-creation function, and
+  `pg_proc` has no `invite`/`create_admin` RPC either. The only way to
+  create an `auth.users` row from the browser is `supabase.auth.signUp()`
+  with the publishable key, which **replaces the calling session** with the
+  new account's session (standard `GoTrueClient` behavior, not a bug) and
+  hard-codes the new profile to `role='displaced', status='pending'`
+  regardless of what the form collected — there is no way to both keep the
+  Super Admin signed in and hand the new account `role='camp_admin'`
+  without a second write issued by an already-gone session. Per the phase's
+  own decision rule, this is a case to defer, not work around: the
+  "إضافة مسؤول" button still opens (nothing is removed from the UI), but
+  now shows an explanation instead of the old password-collecting form.
+  **What would unblock it:** a new Edge Function (e.g.
+  `admin-create-camp-admin`), same trust boundary as the three Cloudinary
+  functions today — verifies the caller is `super_admin` server-side, calls
+  `auth.admin.createUser()` with the `service_role` key (kept in the
+  function's own environment, never the browser), then immediately
+  overwrites the trigger-created profile's `role`/`camp_id`/`status` using
+  its own service client. Full reasoning:
+  `docs/superpowers/specs/2026-08-19-phase-4.10-camps-camp-admins-design.md`
+  §1.3/§4.
+- No other backend/schema/RLS change of any kind beyond the one function
+  above — confirmed via `mcp__supabase__get_advisors` both immediately
+  after applying it and again at the end of the phase.
+- **Remaining mock behavior for these two pages: none**, except the one
+  deferred operation above. Every other role/page's mock status is
+  unchanged by this phase.
+- Verified with three new suites:
+  `supabase/tests/phase4.10-role-authorization.test.mjs` (super_admin full
+  camps CRUD + the new RPC succeed; camp_admin/displaced rejected on every
+  write and on the RPC itself, including the specific case of a
+  camp_admin attempting to promote a profile *in their own camp* to
+  camp_admin, which `guard_profile_privileges` rejects with an explicit
+  `42501` rather than a silent zero-row RLS match; anonymous limited to
+  active camps only; route guard blocks both non-super roles from both
+  pages; no `service_role` key reaches either page),
+  `supabase/tests/phase4.10-camps-verification.test.mjs` (list/stat counts,
+  search, duplicate-name rejection, a full create→edit→toggle→delete round
+  trip, and the delete-blocked-while-in-use backstop case above, all against
+  independent service-role queries), and
+  `supabase/tests/phase4.10-camp-admins-verification.test.mjs` (list/email/
+  search/campId-filter/status-filter/summary checks — email specifically
+  verified through `serviceClient.auth.admin.getUserById()`, the Auth Admin
+  API, never the RPC this phase itself adds — full edit/toggle/delete CRUD
+  against a fixture admin created directly through
+  `serviceClient.auth.admin.createUser()` since the app cannot create one,
+  and a dedicated case proving "إضافة مسؤول" opens the deferral explanation
+  and creates zero rows). All three suites' fixtures are removed in
+  `finally`; live `camps`/`profiles`/`families`/`auth.users` counts
+  confirmed back at baseline (3/8/12/8) after every run.
+- No `service_role` key or other private credential reaches the browser.
