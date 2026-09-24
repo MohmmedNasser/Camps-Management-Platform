@@ -38,6 +38,7 @@ import {
   deleteCamp,
   isDuplicateCampName,
 } from '../supabase/camps.js';
+import { DataAccessError, ErrorType } from '../supabase/errors.js';
 
 const state = { q: '' };
 let currentRows = []; // last rendered rows, for the data-edit/data-toggle/data-delete handlers
@@ -118,8 +119,14 @@ function init({ session, content }) {
       console.error(error);
       // The fast pre-check above covers the common cases; documents and
       // reviewed registration requests aren't in listCampsWithStats()'s
-      // counts, so ON DELETE RESTRICT is the real backstop here.
-      toast.error('تعذر الحذف', 'يوجد سجلات مرتبطة بهذا المخيم. لا يمكن حذفه.');
+      // counts, so ON DELETE RESTRICT (mapped to ErrorType.VALIDATION) is
+      // the real backstop here. Any other error type gets its own message
+      // rather than the misleading "records are attached" one.
+      const inUse = error instanceof DataAccessError && error.type === ErrorType.VALIDATION;
+      toast.error(
+        'تعذر الحذف',
+        inUse ? 'يوجد سجلات مرتبطة بهذا المخيم. لا يمكن حذفه.' : error.message || 'حدث خطأ غير متوقع'
+      );
     }
   });
 
