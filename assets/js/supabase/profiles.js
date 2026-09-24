@@ -1,6 +1,6 @@
 // assets/js/supabase/profiles.js
 import { requireClient, currentUserId } from '../core/supabase-client.js';
-import { run, mapError } from './errors.js';
+import { run, mapError, DataAccessError, ErrorType } from './errors.js';
 import { paginate, sort } from './query.js';
 
 const SORT_COLUMNS = ['created_at', 'full_name', 'status'];
@@ -63,6 +63,50 @@ export async function listCampAdminAccounts() {
     status: row.status,
     createdAt: row.created_at,
   }));
+}
+
+const CAMP_ADMIN_EDGE_ERROR_TYPES = {
+  unauthorized: ErrorType.UNAUTHORIZED,
+  forbidden: ErrorType.FORBIDDEN,
+  validation: ErrorType.VALIDATION,
+  duplicate: ErrorType.DUPLICATE,
+  database: ErrorType.DATABASE,
+};
+
+/** Edge Function errors arrive as `{ error: { code, message } }` on the
+ *  failed response — same convention cloudinary.js's mapFunctionError()
+ *  uses, duplicated locally rather than shared since the two modules'
+ *  error-code sets differ. */
+async function mapCampAdminFunctionError(error) {
+  const context = error?.context;
+  if (context && typeof context.json === 'function') {
+    try {
+      const body = await context.json();
+      if (body?.error?.message) {
+        return new DataAccessError(
+          CAMP_ADMIN_EDGE_ERROR_TYPES[body.error.code] || ErrorType.DATABASE,
+          body.error.message,
+          error
+        );
+      }
+    } catch {
+      // fall through to the generic message below
+    }
+  }
+  return new DataAccessError(ErrorType.DATABASE, 'حدث خطأ غير متوقع، حاول مرة أخرى', error);
+}
+
+/** Super Admin only: creates a real Auth user + promotes its trigger-created
+ *  profile to role='camp_admin' in one privileged operation the publishable
+ *  key cannot perform (Phase 4.10 §1.3/§4). Never constructs a service-role
+ *  client here — that only exists inside the Edge Function itself. */
+export async function createCampAdmin({ fullName, email, phone, password, campId, status }) {
+  const client = requireClient();
+  const { data, error } = await client.functions.invoke('admin-create-camp-admin', {
+    body: { fullName, email, phone, password, campId, status },
+  });
+  if (error) throw await mapCampAdminFunctionError(error);
+  return data.admin;
 }
 
 /** Super Admin editing ANOTHER profile's name/phone (updateOwnProfile()

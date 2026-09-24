@@ -18,6 +18,7 @@ export type ErrorCode =
   | 'validation'
   | 'payload_too_large'
   | 'unsupported_type'
+  | 'duplicate'
   | 'database'
   | 'upstream';
 

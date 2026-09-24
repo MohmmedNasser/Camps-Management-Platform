@@ -194,7 +194,15 @@ test('Phase 4.10 camp-admins DB-vs-UI verification', async (t) => {
       await page.close();
     });
 
-    await t.test('"إضافة مسؤول" opens the deferral explanation and creates no row', async () => {
+    // Superseded by Phase 4.11 (docs/superpowers/specs/2026-08-20-phase-4.11-
+    // secure-camp-admin-creation-design.md): "إضافة مسؤول" now opens the real
+    // create form via the admin-create-camp-admin Edge Function, not a
+    // deferral dialog. This case still proves the one thing that mattered
+    // about the button before Phase 4.11 and still matters after it: merely
+    // OPENING the modal must never create a row — only a real submit does
+    // (see supabase/tests/phase4.11-camp-admin-creation-verification.test.mjs
+    // for the full real-create round trip).
+    await t.test('"إضافة مسؤول" opens the real create form; opening it alone creates no row', async () => {
       const { count: before } = await serviceClient.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'camp_admin');
 
       const page = await browser.newPage();
@@ -202,14 +210,13 @@ test('Phase 4.10 camp-admins DB-vs-UI verification', async (t) => {
       await page.goto(`${base}/pages/camp-admins.html`, { waitUntil: 'load' });
       await page.waitForSelector('table, .empty', { timeout: 30000 });
       await page.click('[data-create]');
-      await page.waitForTimeout(500);
-      const modalText = await page.locator('.modal, [role="dialog"]').first().innerText();
-      assert.ok(modalText.includes('هذه الميزة غير متاحة بعد'), 'expected the deferral explanation, not a create form');
-      assert.ok(!(await page.locator('#password').count()), 'no password field must ever be rendered (no create form opens)');
+      await page.waitForSelector('#admin-form', { timeout: 10000 });
+      assert.ok(await page.locator('#password').count(), 'the real create form must render a password field');
+      await page.click('[data-close]');
       await page.close();
 
       const { count: after } = await serviceClient.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'camp_admin');
-      assert.equal(after, before, 'clicking إضافة مسؤول must never create a profiles row');
+      assert.equal(after, before, 'opening إضافة مسؤول without submitting must never create a profiles row');
     });
 
     await t.test('fixture CRUD: edit (name/phone/camp) -> toggle status -> delete, against a service-created fixture admin', async () => {

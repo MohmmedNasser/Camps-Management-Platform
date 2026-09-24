@@ -1413,3 +1413,152 @@ the same end-state Phase 4.9 reached for `organizations.html`.
   `finally`; live `camps`/`profiles`/`families`/`auth.users` counts
   confirmed back at baseline (3/8/12/8) after every run.
 - No `service_role` key or other private credential reaches the browser.
+
+## 27 · Phase 4.11 — Secure Camp Admin account creation
+
+Unblocks the one operation Phase 4.10 deferred (§26 above, design doc
+§1.3/§4): a Super Admin can now create a real Camp Admin account from
+`camp-admins.html`. This is the first Edge Function in the project that
+constructs a `service_role` client — every prior function
+(`documents-upload`/`-access`/`-delete`) did all of its DB work through a
+caller-scoped client, relying on RLS.
+
+- **Edge Function: `admin-create-camp-admin`** (new; project now has 4 Edge
+  Functions, up from 3). `verify_jwt: true`, same as the three Cloudinary
+  functions. Deployed via `mcp__supabase__deploy_edge_function` — no local
+  Supabase CLI session exists in this environment. **Bundling note for
+  future Edge Functions deployed the same way:** submitting
+  `entrypoint_path:'index.ts'` with flat `files` (`index.ts` +
+  `_shared/*.ts`) failed to bundle ("Module not found .../_shared/cors.ts")
+  — the platform auto-nests the entrypoint one level into an internal
+  `source/` folder and did not resolve the sibling `_shared/` from that
+  combination. Pre-nesting the entrypoint myself — `entrypoint_path:
+  'source/index.ts'`, files named `source/index.ts` + `_shared/cors.ts`
+  (top-level, sibling of `source/`) — deployed successfully. The local repo
+  file (`supabase/functions/admin-create-camp-admin/index.ts`) still
+  imports `../_shared/*.ts`, matching every other function's on-disk layout
+  (`supabase/functions/_shared/`, one shared folder for all functions); only
+  the MCP tool's `files` payload needed the extra nesting.
+- **Request contract:** `POST` body `{fullName, email, phone, password,
+  campId, status}` — matches the pre-existing (previously unused)
+  `campAdminFields(values, {isNew:true})`/`campAdminSchema({isNew:true})`
+  mock-era create form exactly (name/email/phone/campId/status/password),
+  so no UI redesign was needed, only wiring. No `role` field is ever read
+  from the body — the created role is `'camp_admin'`, hardcoded in the
+  function's one `profiles` `UPDATE`. Response `201`: `{admin:{id, fullName,
+  email, phone, campId, status, createdAt}}`. Errors: `401 unauthorized`,
+  `403 forbidden`, `400 validation`, `409 duplicate`, `500 database` — same
+  `{error:{code,message}}` shape `_shared/http.ts` already defines, extended
+  with one new `ErrorCode` member (`'duplicate'`, a type-only addition —
+  each function ships its own bundled copy of `_shared/http.ts`, so this
+  changes no other function's deployed behavior).
+- **Authorization model:** independent of `PAGE_ACCESS`/`can()` (UX-only)
+  and independent of RLS (a `service_role` client bypasses it by
+  construction). The function re-derives the caller's own role on **every**
+  call, before constructing any privileged client: `callerClient(authHeader)`
+  + `callerUser()` resolve the caller (401 if missing/invalid), then a
+  caller-scoped `profiles.select('role,status').eq('id',caller.id)` — RLS's
+  pre-existing `profiles_select_own_or_admin` already permits reading one's
+  own row — must show `role='super_admin' AND status='active'` (403
+  otherwise). This mirrors `private.is_super_admin()`'s own SQL definition.
+- **Auth creation + profile linking:** `service.auth.admin.createUser({email,
+  password, email_confirm:true, user_metadata:{full_name,phone}})` — the
+  same password-account, `email_confirm:true` pattern
+  `supabase/seed/seed.mjs` already uses for every demo account (no
+  invitation-email flow exists elsewhere in this project to be consistent
+  with, and the pre-existing UI form already collects a password, settling
+  that design question before this phase started). **Live-verified trigger
+  behavior:** `private.handle_new_user()` (`AFTER INSERT ON auth.users`)
+  fires synchronously inside that same call and inserts a `profiles` row
+  with `role='displaced', status='pending'` **hardcoded** — so the function
+  promotes it with an `UPDATE`, never a second `INSERT` (the trigger's own
+  insert is `ON CONFLICT DO NOTHING`, so a second insert would silently
+  no-op and leave the row un-promoted).
+- **Role/camp assignment:** one `profiles` `UPDATE` — `full_name, phone,
+  role:'camp_admin', camp_id:<validated>, status:<validated>` — issued by
+  the service client. Live-verified that `private.guard_profile_privileges()`
+  (the trigger that would normally block a browser session from changing
+  `role`/`camp_id`/`status`) checks `private.is_browser_session()` first,
+  which is false for a service-role-authenticated request (`session_user =
+  'authenticator' AND jwt.role <> 'service_role'` — a service-role JWT sets
+  `jwt.role = 'service_role'`), so the trigger `return new`s immediately and
+  applies no restriction. `profiles_camp_scope_valid` (`role='camp_admin' ⇒
+  camp_id IS NOT NULL`) is a live DB-level backstop behind the function's
+  own `campId` validation.
+- **Camp validation:** `campId` is checked for UUID shape, then existence
+  (`service.from('camps').select('id').eq('id',campId).maybeSingle()`) —
+  **before** `auth.admin.createUser()` is ever called, so the only failure
+  window needing rollback is a genuinely unexpected error on the subsequent
+  `profiles` `UPDATE`, not a validation mistake.
+- **Duplicate email:** `auth.admin.createUser()`'s error is inspected for
+  `code==='email_exists'` or an "already registered/exists" message
+  fragment (defensive, since the exact Admin API error shape isn't
+  guaranteed across versions) and mapped to `409 duplicate` with an Arabic
+  message matching the existing schema's own duplicate-email copy. No
+  second `auth.users` row, no second `profiles` row, existing account
+  untouched — verified independently in both the security and verification
+  suites.
+- **Rollback:** if the `profiles` `UPDATE` fails or returns no row after a
+  successful `createUser()`, the function calls
+  `service.auth.admin.deleteUser(newUserId)` — `profiles_id_fkey` is `ON
+  DELETE CASCADE` from `auth.users(id)`, so the trigger-created `profiles`/
+  `user_preferences` rows go with it for free. If that cleanup call *also*
+  fails (would require both the service-role `UPDATE` and the service-role
+  `deleteUser` to fail), the orphaned user id is logged server-side only
+  (`console.error`, an Edge Function log, never returned to the caller) and
+  a generic `500` is returned. This one theoretical, near-impossible orphan
+  case is documented rather than papered over — not reproduced in testing,
+  per the phase brief's own instruction not to modify production schema
+  solely to force it.
+- **Security, explicitly verified live** (not merely reasoned about): a
+  `super_admin` token succeeds; `camp_admin`/`displaced`/anonymous/malformed
+  tokens are all rejected with **zero** `auth.users`/`profiles` rows created
+  (checked independently via `serviceClient.auth.admin.listUsers()`, not
+  the app's own output); a request body containing `{"role":"super_admin",
+  "app_role":"super_admin"}` alongside otherwise-valid fields still creates
+  only a `camp_admin` (DB-verified) — the function never reads `body.role`
+  at all, confirmed by a source grep in the ledger, not just by testing;
+  invalid/nonexistent `campId` rejected before any Auth user is created;
+  every required field rejected individually when missing; a grep-based
+  scan of every file under `assets/` plus a live browser network-traffic
+  capture during the real create flow both confirm the `service_role` key
+  never appears in any browser-reachable file or outgoing request. `camps`/
+  `profiles`/`auth.users` counts return to baseline after every test run.
+- **`get_advisors` unchanged from the Phase 4.10 baseline** — 6
+  `authenticated_security_definer_function_executable` WARNs + 1
+  pre-existing `auth_leaked_password_protection` WARN. **No migration, no
+  new SQL function, no RLS/schema change of any kind** — the existing
+  trigger, guard, CHECK constraint and RLS policy already did everything
+  this phase needed; confirmed unnecessary by investigation before writing
+  any function code, not skipped by omission.
+- **Frontend:** `createCampAdmin({fullName,email,phone,password,campId,
+  status})` (new, in `assets/js/supabase/profiles.js`, calling
+  `client.functions.invoke('admin-create-camp-admin',{body})` — same
+  `.functions.invoke()` convention `cloudinary.js` already established, with
+  its own small `mapCampAdminFunctionError()`/`EDGE_ERROR_TYPES` map rather
+  than a shared one, matching that file's own precedent of one map per
+  calling module). `assets/js/pages/camp-admins.js`'s `openEditor(session,
+  user)` now handles `user === null` as create (reusing the existing
+  `campAdminFields`/`campAdminSchema` form unmodified) instead of the old
+  `[data-create]` handler opening a deferral dialog; edit/toggle/delete are
+  unchanged. No page redesign — same modal, same form, same table, same
+  filters.
+- **Verified with two new suites:**
+  `supabase/tests/phase4.11-camp-admin-creation-security.test.mjs` (calls
+  the Edge Function directly over HTTP, independent of any frontend code —
+  the full authorization matrix above, role-tampering, invalid-camp,
+  missing-field, malformed-JSON, OPTIONS-preflight and duplicate-email
+  cases, plus the `assets/` secret-scan) and
+  `supabase/tests/phase4.11-camp-admin-creation-verification.test.mjs` (the
+  real `camp-admins.html` UI in a real browser: form-not-dialog check, a
+  full create round trip with independent `auth.users`/`profiles`
+  verification, session-preservation check, in-browser network-traffic scan
+  for the service-role key, duplicate-email rejection, and page-refresh
+  persistence). Both suites' fixtures are removed in `finally` via
+  `serviceClient.auth.admin.deleteUser()` (cascades the profile); live
+  `auth.users` count confirmed back at baseline after every run.
+- **Remaining mock behavior for this page: none** beyond what Phase 4.10
+  already left unchanged (changing an existing Camp Admin's Auth **email**
+  is still not implemented — it needs a separate Admin API call this phase
+  was not asked to add, since it was never the deferred item).
+- No `service_role` key or other private credential reaches the browser.

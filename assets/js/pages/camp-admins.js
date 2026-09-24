@@ -5,11 +5,10 @@
  * representative record or name field. There is exactly one Super Admin, so
  * this page never creates one.
  *
- * Creating a brand-new admin account is deferred: it needs a privileged
- * Auth-user-creation step (service_role, via a secure Edge Function) that
- * does not exist yet — see docs/superpowers/specs/2026-08-19-phase-4.10-
- * camps-camp-admins-design.md §1.3/§4. The "إضافة مسؤول" button stays, but
- * opens an explanation instead of the create form.
+ * Creating a brand-new admin account goes through the `admin-create-camp-
+ * admin` Edge Function (service_role, server-side only — see
+ * docs/superpowers/specs/2026-08-20-phase-4.11-secure-camp-admin-creation-
+ * design.md), which unblocks the operation Phase 4.10 deferred.
  */
 
 import { qs, delegate, params, setParams } from '../utils/dom.js';
@@ -36,7 +35,15 @@ import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { STATUS, STATUS_LABELS } from '../core/config.js';
-import { listCampAdminAccounts, updateProfile, deleteProfile, assignCampAdmin, setProfileStatus } from '../supabase/profiles.js';
+import {
+  listCampAdminAccounts,
+  createCampAdmin,
+  updateProfile,
+  deleteProfile,
+  assignCampAdmin,
+  setProfileStatus,
+} from '../supabase/profiles.js';
+import { DataAccessError, ErrorType } from '../supabase/errors.js';
 import { listCampsWithStats, listCampOptions } from '../supabase/camps.js';
 
 const state = { q: '', campId: '', status: '', campOptions: [] };
@@ -113,17 +120,7 @@ async function init({ session, content }) {
     getFilters: () => filterSpec(),
   });
 
-  delegate(content, 'click', '[data-create]', () => {
-    openModal({
-      title: 'إضافة مسؤول مخيم',
-      body: alert({
-        variant: 'warning',
-        title: 'هذه الميزة غير متاحة بعد',
-        text: 'إنشاء حساب مسؤول جديد يتطلب إنشاء حساب مصادقة، وهي عملية لا يمكن تنفيذها بأمان من المتصفح حالياً. يمكنك تعديل بيانات المسؤولين الحاليين أو تفعيل/تعطيل حساباتهم أو حذفها.',
-      }),
-      footer: button({ label: 'حسناً', variant: 'primary', attrs: 'data-close' }),
-    });
-  });
+  delegate(content, 'click', '[data-create]', () => openEditor(session, null));
 
   delegate(content, 'click', '[data-edit]', (event, node) =>
     openEditor(session, currentRows.find((row) => row.id === node.dataset.edit))
@@ -292,32 +289,45 @@ function resultsView(rows) {
 
 /* ---- Editor dialog --------------------------------------------------------- */
 
-/** Edit only — creating a new admin is deferred (see the module header and
- *  the `[data-create]` handler above, which never calls this with a null user). */
+/** `user === null` creates a new admin; otherwise edits the given one. */
 function openEditor(session, user) {
-  if (!user) return;
+  const isNew = !user;
 
   const modal = openModal({
-    title: `تعديل ${user.fullName}`,
+    title: isNew ? 'إضافة مسؤول مخيم' : `تعديل ${user.fullName}`,
     description: 'حساب إدارة مخيم واحد. مسؤول المخيم هو مندوبه المعتمد.',
     size: 'lg',
     body: `<form class="form" id="admin-form" novalidate>${campAdminFields(
-      { ...user, name: user.fullName },
-      { camps: state.campOptions, isNew: false }
+      isNew ? {} : { ...user, name: user.fullName },
+      { camps: state.campOptions, isNew }
     )}</form>`,
     footer: `
       ${button({ label: 'إلغاء', variant: 'secondary', attrs: 'data-close' })}
-      ${button({ label: 'حفظ', variant: 'primary', type: 'submit', attrs: 'form="admin-form"' })}`,
+      ${button({ label: isNew ? 'إضافة' : 'حفظ', variant: 'primary', type: 'submit', attrs: 'form="admin-form"' })}`,
   });
 
   const form = qs('#admin-form', modal.element);
 
   bindForm(form, {
-    schema: campAdminSchema({ isNew: false, isDuplicateEmail: () => false }),
+    schema: campAdminSchema({ isNew, isDuplicateEmail: () => false }),
     onSubmit: async (values) => {
-      const payload = { fullName: values.name.trim(), phone: values.phone.trim() };
-
       try {
+        if (isNew) {
+          await createCampAdmin({
+            fullName: values.name.trim(),
+            email: values.email.trim(),
+            phone: values.phone.trim(),
+            password: values.password,
+            campId: values.campId,
+            status: values.status,
+          });
+          modal.close('submit');
+          toast.success('تمت الإضافة', `تم إنشاء حساب "${values.name.trim()}".`);
+          load(session);
+          return;
+        }
+
+        const payload = { fullName: values.name.trim(), phone: values.phone.trim() };
         await updateProfile(user.id, payload);
         if (values.campId !== user.campId) await assignCampAdmin(user.id, values.campId);
         if (values.status !== user.status) await setProfileStatus(user.id, values.status);
@@ -327,7 +337,11 @@ function openEditor(session, user) {
         load(session);
       } catch (error) {
         console.error(error);
-        toast.error('تعذر الحفظ', error.message || 'حدث خطأ غير متوقع');
+        const isDuplicate = error instanceof DataAccessError && error.type === ErrorType.DUPLICATE;
+        toast.error(
+          isNew ? 'تعذر الإضافة' : 'تعذر الحفظ',
+          isDuplicate ? 'هذا البريد الإلكتروني مستخدم بالفعل.' : error.message || 'حدث خطأ غير متوقع'
+        );
       }
     },
   });
