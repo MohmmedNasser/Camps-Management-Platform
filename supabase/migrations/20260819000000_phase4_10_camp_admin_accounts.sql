@@ -25,7 +25,7 @@ begin
   end if;
 
   return query
-  select p.id, p.full_name, u.email, p.phone, p.camp_id, c.name, p.status, p.created_at
+  select p.id, p.full_name, u.email::text, p.phone, p.camp_id, c.name, p.status, p.created_at
   from public.profiles p
   join auth.users u on u.id = p.id
   left join public.camps c on c.id = p.camp_id
