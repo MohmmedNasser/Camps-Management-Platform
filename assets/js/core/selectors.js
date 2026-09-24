@@ -1110,6 +1110,21 @@ export function campAdminRows({ query = '', campId = '', status = '' } = {}) {
     }));
 }
 
+/** Real camp-admin list filter — same split as matchesOrganizationFilters()/
+ * matchesDocumentFilters()/matchesRegistrationRequestFilters()/matchesAidFilters()
+ * above — client-side over supabase/profiles.js's listCampAdminAccounts(). */
+export function matchesCampAdminFilters(row, { query = '', campId = '', status = '' } = {}) {
+  if (campId && row.campId !== campId) return false;
+  if (status && row.status !== status) return false;
+  const term = query.trim().toLowerCase();
+  if (!term) return true;
+  return (
+    row.fullName.toLowerCase().includes(term) ||
+    row.email.toLowerCase().includes(term) ||
+    (row.phone || '').includes(term)
+  );
+}
+
 /** True when a camp still holds records and therefore cannot be deleted. */
 export function campInUse(campId) {
   return (
