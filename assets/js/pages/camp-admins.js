@@ -194,7 +194,9 @@ async function load(session) {
       ...row,
       displacedCount: breakdownById.get(row.campId)?.displacedCount || 0,
     }));
-    currentRows = allRows.filter((row) => select.matchesCampAdminFilters(row, state));
+    currentRows = allRows.filter((row) =>
+      select.matchesCampAdminFilters(row, { query: state.q, campId: state.campId, status: state.status })
+    );
 
     target.innerHTML = resultsView(currentRows);
 
