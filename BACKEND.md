@@ -1562,3 +1562,85 @@ caller-scoped client, relying on RLS.
   is still not implemented — it needs a separate Admin API call this phase
   was not asked to add, since it was never the deferred item).
 - No `service_role` key or other private credential reaches the browser.
+
+## 28 · Phase 4.12 — Displaced Person Dashboard on real data
+
+The last of the three dashboard role variants
+(`assets/js/pages/dashboard.js`) to move off mock data. Design doc:
+`docs/superpowers/specs/2026-09-24-phase-4.12-displaced-dashboard-real-data-design.md`.
+
+- **Not merely mock — dead for a real session.** The old branch read
+  `session.displacedId`, a mock-era field the real session object (Phase
+  4.1) never carries; it has `familyMemberId` (`profiles.family_member_id`)
+  instead. So before this phase, a real displaced account's dashboard
+  silently rendered as if it had no person, family, aid or documents,
+  regardless of the database.
+- **Identity chain**, unchanged from Phase 4.1/4.5: `auth.uid()` ->
+  `profiles.id` (role/status gate: only `status='approved'` reaches this
+  page, enforced by `core/router.js`'s existing `guard()`) ->
+  `profiles.family_member_id` -> `family_members.id` (the signed-in
+  person's own file) -> `family_members.family_id` -> `families.id`.
+  `family_member_id` is set only by `approve_registration_request()`, in
+  the same statement that sets `status='approved'` — so "approved but no
+  family" is not reachable through the app, only through direct database
+  manipulation (still handled defensively, not assumed impossible).
+- **No new backend object of any kind** — no migration, no RLS policy, no
+  Edge Function, no RPC. Every row this dashboard needs was already
+  reachable through the four RLS-scoped policies added in migration
+  `20260816120200` (`family_members_select_scoped`,
+  `families_select_scoped`, `aid_distributions_select_scoped` (+2
+  junctions), `documents_select_scoped`), all keyed off
+  `private.current_family_id()`. Confirmed live: this dashboard **must
+  not** call `get_dashboard_statistics()`/`get_family_statistics()` — both
+  explicitly `raise exception ... using errcode = '42501'` for
+  `private.is_displaced()` callers. It composes from direct table reads
+  instead, same as the mock version always did.
+- **`getDisplacedDashboard(session)`** (new, in
+  `assets/js/supabase/dashboard.js`, alongside the existing
+  `getSuperAdminDashboard()`/`getCampAdminDashboard()`) composes the exact
+  `{ person, family, myAid, myDocuments }` shape `dashboard.js`'s
+  `displacedView()` already reads, from four functions every one of which
+  already existed and was already proven by an earlier phase:
+  `getDisplacedPerson()` (family-members.js, Phase 4.5),
+  `getFamilyByReferenceCode()` (families.js, Phase 4.4),
+  `getFamilyAidHistory()` (aids.js, Phase 4.4), `listDocuments()`
+  (documents.js, Phase 2) — the same four `family-details.js` already uses
+  for the Camp Admin family-detail view. `dashboard.js`'s
+  `collect()`/`displacedView()`/`profileCompletion()`/`ownAidRow()` needed
+  **no other change** — the new function's return shape matches what they
+  already consumed.
+- **Notifications stay mock, deliberately.** RLS already supports a real
+  `notifications_select_own` count, but `notifications.html` itself is not
+  migrated in this phase (or any phase yet) — wiring only the dashboard's
+  count would make it disagree with that page's still-mock list, the exact
+  split-brain the `getFilteredDisplaced` single-query principle (§ "Query
+  layer") exists to prevent elsewhere. Real once `notifications.html`
+  itself is migrated.
+- **Five still-mock destination pages, pre-existing, not introduced by this
+  phase:** every link the dashboard offers (`family-details.html` via
+  "أسرتي", `profile.html`, `documents.html`, `aid.html`,
+  `notifications.html`) still has its own un-migrated displaced branch —
+  three of them (`family-details.js`, `profile.js`, and the un-migrated
+  parts of `aid.js`/`documents.js`) already broken for a real session today
+  by the identical `session.displacedId` pattern this phase fixed on the
+  dashboard. Recommended next phase: **Phase 4.13 — the displaced person's
+  own pages**, resolving that set in one slice, the way Phase 4.5 resolved
+  Camp Admin's equivalent set.
+- **Verified with two new suites:**
+  `supabase/tests/phase4.12-displaced-dashboard-verification.test.mjs`
+  (DB-vs-UI for all 4 seeded displaced accounts — profile, family, aid
+  count/rows, document count, no value/price field ever renders per domain
+  rule 9, refresh persistence, logout, mock-data-detection grep, network/
+  console checks) and
+  `supabase/tests/phase4.12-displaced-dashboard-isolation.test.mjs`
+  (per-account RLS-only row sets across every table read, the
+  same-camp-different-family case `ahmad@camps.ps`/`yousef@camps.ps`
+  specifically covers, id-spoofing attempts, anonymous access, Camp
+  Admin/Super Admin non-interference, a real-browser cross-user render
+  check, session preservation, and one disposable fixture — an approved
+  profile with `family_member_id = null`, the one state seed data cannot
+  express — created, exercised and deleted in `finally`, confirmed gone
+  from `auth.users` after the run).
+- No `service_role` key or other private credential reaches the browser.
+  No client-controlled identity parameter (`?familyId=`, `?personId=` or
+  similar) exists anywhere on this page, before or after this phase.

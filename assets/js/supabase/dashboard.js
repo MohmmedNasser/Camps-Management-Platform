@@ -12,8 +12,11 @@ import { run } from './errors.js';
 import { getDashboardStatistics } from './statistics.js';
 import { listCamps, listCampsWithStats } from './camps.js';
 import { listProfiles } from './profiles.js';
-import { listAidTypes, listAidDistributions } from './aids.js';
+import { listAidTypes, listAidDistributions, getFamilyAidHistory } from './aids.js';
 import { listRegistrationRequests } from './registration-requests.js';
+import { getDisplacedPerson } from './family-members.js';
+import { getFamilyByReferenceCode } from './families.js';
+import { listDocuments } from './documents.js';
 
 function familySizeBuckets() {
   return [
@@ -227,5 +230,60 @@ export async function getCampAdminDashboard(campId) {
     familySizes,
     requests: requestsResult.rows.map(mapRequestRow),
     recentAid: aidResult.rows.map(mapAidRow),
+  };
+}
+
+/** getFamilyAidHistory() row -> the shape ownAidRow() reads. Same mapping
+ *  family-details.js already applies to this exact raw shape. */
+function mapAidHistoryRow(row) {
+  const d = row.distribution;
+  const labels = (d.aid_distribution_types || []).map((t) => t.aid_type?.label_ar).filter(Boolean);
+  return {
+    id: d.id,
+    typeLabels: labels.join('، '),
+    organizationName: d.organization?.name || '—',
+    date: d.distributed_on,
+  };
+}
+
+const EMPTY_DISPLACED_DASHBOARD = { person: null, family: null, myAid: [], myDocuments: [] };
+
+/**
+ * The full displaced-person dashboard composition: { person, family, myAid,
+ * myDocuments } — the exact shape collect() already builds for this role
+ * from mock selectors (Phase 4.12 spec §4), now from real data. RLS-scoped
+ * to the caller's own identity throughout: family_members/families/
+ * aid_distributions/documents all resolve through private.current_family_id(),
+ * which is derived from profiles.family_member_id — real Auth identity
+ * (Phase 4.1), never a URL or localStorage value.
+ *
+ * get_dashboard_statistics()/get_family_statistics() (what the other two
+ * roles' composition functions above call) explicitly reject a displaced
+ * caller (42501, confirmed live) — this composes from direct table reads
+ * instead, same as the mock version always did.
+ */
+export async function getDisplacedDashboard(session) {
+  // Architecturally unreachable: approve_registration_request() sets
+  // status='approved' and family_member_id together, and only pending/
+  // rejected/approved accounts exist — router guard already keeps anything
+  // else off this page. Handled defensively anyway, never assumed impossible.
+  if (!session.familyMemberId) return EMPTY_DISPLACED_DASHBOARD;
+
+  const person = await getDisplacedPerson(session.familyMemberId);
+  if (!person || !person.familyId) return { ...EMPTY_DISPLACED_DASHBOARD, person };
+
+  const family = await getFamilyByReferenceCode(person.familyId);
+  if (!family) return { ...EMPTY_DISPLACED_DASHBOARD, person };
+
+  const [aidRows, docsResult] = await Promise.all([
+    getFamilyAidHistory(family._dbId),
+    listDocuments({ familyId: family._dbId }),
+  ]);
+
+  return {
+    person,
+    family: { ...family, campName: session.campLabel },
+    myAid: aidRows.map(mapAidHistoryRow),
+    myDocuments: docsResult.rows,
   };
 }

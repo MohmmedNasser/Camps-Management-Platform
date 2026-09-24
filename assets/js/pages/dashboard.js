@@ -34,7 +34,7 @@ import { pageUrl } from '../core/router.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, CHART_COLORS } from '../core/config.js';
-import { getSuperAdminDashboard, getCampAdminDashboard } from '../supabase/dashboard.js';
+import { getSuperAdminDashboard, getCampAdminDashboard, getDisplacedDashboard } from '../supabase/dashboard.js';
 
 const shell = await mountShell({ active: 'dashboard.html', title: 'الرئيسية' });
 if (shell) init(shell);
@@ -59,14 +59,11 @@ async function init({ session, content }) {
 async function collect(session) {
   // A displaced person has no relationship to camp-wide figures, so none are
   // computed for them — only their own file, family, aid and notifications.
+  // Phase 4.12: real data, scoped to the signed-in account's own identity.
   if (session.role === ROLES.DISPLACED) {
+    const real = await getDisplacedDashboard(session);
     return {
-      person: session.displacedId ? store.displaced.get(session.displacedId) : null,
-      family: session.displacedId ? select.familyOfPerson(session.displacedId) : null,
-      myAid: session.displacedId ? select.aidForPerson(session.displacedId) : [],
-      myDocuments: session.displacedId
-        ? store.documents.list((row) => row.displacedId === session.displacedId)
-        : [],
+      ...real,
       notifications: select.notificationsFor(session.id).slice(0, 4),
     };
   }
