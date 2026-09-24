@@ -29,10 +29,18 @@ import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
 import { STATUS, labelOf, GOVERNORATES } from '../core/config.js';
+import {
+  listCampsWithStats,
+  createCamp,
+  updateCamp,
+  setCampStatus,
+  deleteCamp,
+  isDuplicateCampName,
+} from '../supabase/camps.js';
 
 const state = { q: '' };
+let currentRows = []; // last rendered rows, for the data-edit/data-toggle/data-delete handlers
 
 const shell = await mountShell({ active: 'camps.html', title: 'المخيمات' });
 if (shell) init(shell);
@@ -63,26 +71,31 @@ function init({ session, content }) {
 
   delegate(content, 'click', '[data-create]', () => openEditor(session, null));
   delegate(content, 'click', '[data-edit]', (event, node) =>
-    openEditor(session, store.camps.get(node.dataset.edit))
+    openEditor(session, currentRows.find((row) => row.id === node.dataset.edit))
   );
 
-  delegate(content, 'click', '[data-toggle]', (event, node) => {
-    const camp = store.camps.get(node.dataset.toggle);
+  delegate(content, 'click', '[data-toggle]', async (event, node) => {
+    const camp = currentRows.find((row) => row.id === node.dataset.toggle);
     if (!camp) return;
     const next = camp.status === STATUS.ACTIVE ? STATUS.DISABLED : STATUS.ACTIVE;
-    store.camps.update(camp.id, { status: next });
-    toast.success(
-      next === STATUS.ACTIVE ? 'تم التفعيل' : 'تم التعطيل',
-      `${camp.name}: ${next === STATUS.ACTIVE ? 'أصبح متاحاً للتسجيل.' : 'لن يظهر في خيارات التسجيل الجديدة.'}`
-    );
-    load(session);
+    try {
+      await setCampStatus(camp.id, next);
+      toast.success(
+        next === STATUS.ACTIVE ? 'تم التفعيل' : 'تم التعطيل',
+        `${camp.name}: ${next === STATUS.ACTIVE ? 'أصبح متاحاً للتسجيل.' : 'لن يظهر في خيارات التسجيل الجديدة.'}`
+      );
+      load(session);
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر التنفيذ', error.message || 'حدث خطأ غير متوقع');
+    }
   });
 
   delegate(content, 'click', '[data-delete]', async (event, node) => {
-    const camp = store.camps.get(node.dataset.delete);
+    const camp = currentRows.find((row) => row.id === node.dataset.delete);
     if (!camp) return;
 
-    if (select.campInUse(camp.id)) {
+    if (camp.displacedCount > 0 || camp.familiesCount > 0 || camp.adminsCount > 0) {
       toast.error(
         'تعذر الحذف',
         'يوجد نازحون أو أسر أو مسؤولون مرتبطون بهذا المخيم. انقلهم أو احذفهم أولاً.'
@@ -96,9 +109,18 @@ function init({ session, content }) {
       confirmLabel: 'حذف',
     });
     if (!ok) return;
-    store.camps.remove(camp.id);
-    toast.success('تم الحذف', 'تم حذف المخيم.');
-    load(session);
+
+    try {
+      await deleteCamp(camp.id);
+      toast.success('تم الحذف', 'تم حذف المخيم.');
+      load(session);
+    } catch (error) {
+      console.error(error);
+      // The fast pre-check above covers the common cases; documents and
+      // reviewed registration requests aren't in listCampsWithStats()'s
+      // counts, so ON DELETE RESTRICT is the real backstop here.
+      toast.error('تعذر الحذف', 'يوجد سجلات مرتبطة بهذا المخيم. لا يمكن حذفه.');
+    }
   });
 
   delegate(content, 'click', '[data-clear-search]', () => {
@@ -120,7 +142,7 @@ async function load(session) {
   target.innerHTML = skeletonTable(4);
 
   try {
-    const all = await store.load(() => select.campBreakdown());
+    const all = await store.load(() => listCampsWithStats());
     const term = state.q.trim().toLowerCase();
     const rows = term
       ? all.filter(
@@ -128,6 +150,7 @@ async function load(session) {
             camp.name.toLowerCase().includes(term) || (camp.city || '').toLowerCase().includes(term)
         )
       : all;
+    currentRows = rows;
 
     target.innerHTML = resultsView(rows);
 
@@ -262,28 +285,33 @@ function openEditor(session, camp) {
 
   bindForm(form, {
     schema: campSchema(),
-    onSubmit: (values) => {
+    onSubmit: async (values) => {
       const payload = {
         name: values.name.trim(),
         governorate: values.governorate,
         city: values.city.trim(),
-        status: values.status,
       };
 
-      const duplicate = store.camps.find(
-        (row) => row.name.trim() === payload.name && (!camp || row.id !== camp.id)
-      );
-      if (duplicate) {
-        toast.error('تعذر الحفظ', 'يوجد مخيم مسجل بنفس الاسم.');
-        return;
+      try {
+        if (isNew) {
+          const created = await createCamp(payload);
+          if (values.status && values.status !== STATUS.ACTIVE) await setCampStatus(created.id, values.status);
+        } else {
+          await updateCamp(camp.id, payload);
+          if (values.status !== camp.status) await setCampStatus(camp.id, values.status);
+        }
+
+        modal.close('submit');
+        toast.success(isNew ? 'تمت الإضافة' : 'تم الحفظ', `تم حفظ بيانات "${payload.name}".`);
+        load(session);
+      } catch (error) {
+        if (isDuplicateCampName(error)) {
+          toast.error('تعذر الحفظ', 'يوجد مخيم مسجل بنفس الاسم.');
+          return;
+        }
+        console.error(error);
+        toast.error('تعذر الحفظ', error.message || 'حدث خطأ غير متوقع');
       }
-
-      if (isNew) store.camps.create({ ...payload, createdAt: new Date().toISOString() });
-      else store.camps.update(camp.id, payload);
-
-      modal.close('submit');
-      toast.success(isNew ? 'تمت الإضافة' : 'تم الحفظ', `تم حفظ بيانات "${payload.name}".`);
-      load(session);
     },
   });
 }
