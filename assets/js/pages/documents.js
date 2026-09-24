@@ -39,12 +39,14 @@ import { isConfigured, currentUserId } from '../core/supabase-client.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import * as cloudinary from '../supabase/cloudinary.js';
-import { getCampDocuments } from '../supabase/documents.js';
+import { getCampDocuments, getFamilyDocuments } from '../supabase/documents.js';
 import { getCampDisplacedPersons } from '../supabase/family-members.js';
+import { getOwnFamily } from '../supabase/families.js';
 import { ROLES, DOCUMENT_CATEGORIES } from '../core/config.js';
 
 const state = { q: '', category: '', campId: '' };
 let campPeople = []; // Camp Admin's real person options, fetched once in init()
+let ownFamily = null; // the displaced session's own family (with members), fetched once in init()
 let currentRows = []; // last rendered rows, for the data-preview/download/delete handlers
 
 const MIME_EXTENSIONS = {
@@ -128,6 +130,9 @@ async function init({ session, content }) {
   if (session.role === ROLES.CAMP_ADMIN) {
     content.innerHTML = skeletonTable(5);
     campPeople = (await getCampDisplacedPersons(session.campId)).map((p) => ({ value: p.id, label: p.fullName }));
+  } else if (session.role === ROLES.DISPLACED) {
+    content.innerHTML = skeletonTable(5);
+    ownFamily = await getOwnFamily(session);
   }
 
   content.innerHTML = `
@@ -235,15 +240,23 @@ async function init({ session, content }) {
  * already guarantees for the mock branch below.
  */
 async function collect(session) {
-  if (session.role !== ROLES.CAMP_ADMIN) {
-    return {
-      rows: select.searchDocuments({ query: state.q, category: state.category, campId: state.campId, session }),
-      allRows: null,
-    };
+  if (session.role === ROLES.CAMP_ADMIN) {
+    const allRows = await getCampDocuments(session.campId);
+    const rows = allRows.filter((row) => select.matchesDocumentFilters(row, { query: state.q, category: state.category }));
+    return { rows, allRows };
   }
-  const allRows = await getCampDocuments(session.campId);
-  const rows = allRows.filter((row) => select.matchesDocumentFilters(row, { query: state.q, category: state.category }));
-  return { rows, allRows };
+
+  if (session.role === ROLES.DISPLACED) {
+    if (!ownFamily) return { rows: [], allRows: [] };
+    const allRows = await getFamilyDocuments(ownFamily._dbId);
+    const rows = allRows.filter((row) => select.matchesDocumentFilters(row, { query: state.q, category: state.category }));
+    return { rows, allRows };
+  }
+
+  return {
+    rows: select.searchDocuments({ query: state.q, category: state.category, campId: state.campId, session }),
+    allRows: null,
+  };
 }
 
 async function load(session) {
@@ -356,9 +369,8 @@ function emptyView(session) {
 function peopleFor(session) {
   if (session.role === ROLES.CAMP_ADMIN) return campPeople;
   if (session.role === ROLES.DISPLACED) {
-    const person = store.displaced.get(session.displacedId);
-    if (!person) return [];
-    return select.personOptions({ familyId: person.familyId });
+    if (!ownFamily) return [];
+    return ownFamily.members.map((member) => ({ value: member.id, label: member.fullName }));
   }
   return select.personOptions({ campId: '' });
 }
@@ -408,6 +420,26 @@ function openUploader(session) {
       // Camp Admin: the row is real, sourced from getCampDocuments() on the
       // next load() — no mock mirroring, no localStorage record.
       if (session.role === ROLES.CAMP_ADMIN) {
+        try {
+          await cloudinary.uploadDocument({
+            file: file.raw,
+            name,
+            category: values.category,
+            familyMemberId: values.displacedId,
+          });
+        } catch (error) {
+          toast.error('تعذر الرفع', error.message || 'حدث خطأ غير متوقع');
+          return;
+        }
+        modal.close('submit');
+        toast.success('تم الرفع', 'تمت إضافة المستند إلى الملف.');
+        load(session);
+        return;
+      }
+
+      // Displaced: the row is real, sourced from getFamilyDocuments() on the
+      // next load() — no mock mirroring, no localStorage record (Phase 4.13).
+      if (session.role === ROLES.DISPLACED) {
         try {
           await cloudinary.uploadDocument({
             file: file.raw,
