@@ -10,7 +10,7 @@
 import { requireClient } from '../core/supabase-client.js';
 import { run } from './errors.js';
 import { getDashboardStatistics } from './statistics.js';
-import { listCamps } from './camps.js';
+import { listCamps, listCampsWithStats } from './camps.js';
 import { listProfiles } from './profiles.js';
 import { listAidTypes, listAidDistributions } from './aids.js';
 import { listRegistrationRequests } from './registration-requests.js';
@@ -122,36 +122,6 @@ export async function getAidTypeBreakdown(campId = null) {
 }
 
 /**
- * Per-camp breakdown for the "المخيمات" list and campComparisonBar() —
- * one get_dashboard_statistics(camp.id) call and one admins-count call
- * per camp, all camps run concurrently.
- */
-async function buildCampBreakdown(camps) {
-  return Promise.all(
-    camps.map(async (camp) => {
-      const [stats, admins] = await Promise.all([
-        getDashboardStatistics(camp.id),
-        listProfiles({ role: 'camp_admin', campId: camp.id, pageSize: 1 }),
-      ]);
-      return {
-        id: camp.id,
-        name: camp.name,
-        city: camp.city,
-        governorate: camp.governorate,
-        status: camp.status,
-        displacedCount: Number(stats?.total_members) || 0,
-        familiesCount: Number(stats?.total_families) || 0,
-        aidCount: Number(stats?.aid_distributions) || 0,
-        adminsCount: admins.total,
-        disabilityCount: Number(stats?.disability) || 0,
-        childrenCount: Number(stats?.children_under_18) || 0,
-        orphansCount: Number(stats?.orphans) || 0,
-      };
-    })
-  );
-}
-
-/**
  * The full Super Admin dashboard composition: { stats, byMonth,
  * familySizes, camps } — the exact shape assets/js/pages/dashboard.js's
  * collect() already builds for every other role, now from real data
@@ -168,7 +138,7 @@ export async function getSuperAdminDashboard() {
       getDonorOrganizationsCount(null),
       getMonthlyRegistrations(null, 8),
       getFamilySizeDistribution(null),
-      buildCampBreakdown(camps),
+      listCampsWithStats(),
     ]);
 
   return {
