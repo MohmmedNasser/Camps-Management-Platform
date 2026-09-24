@@ -35,7 +35,12 @@ import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { rules } from '../utils/validators.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import { getOwnProfile, updateOwnProfile } from '../supabase/profiles.js';
+import { getDisplacedPerson } from '../supabase/family-members.js';
+import { getFamilyByReferenceCode } from '../supabase/families.js';
+import { getFamilyAidHistory } from '../supabase/aids.js';
+import { listDocuments } from '../supabase/documents.js';
+import { signIn, updatePassword } from '../supabase/auth.js';
 import {
   ROLES,
   ROLE_LABELS,
@@ -64,14 +69,27 @@ async function init({ session, content }) {
   }
 }
 
-function collect(session) {
-  const person = session.displacedId ? store.displaced.get(session.displacedId) : null;
+async function collect(session) {
+  const profile = await getOwnProfile();
+  const person = profile?.family_member_id ? await getDisplacedPerson(profile.family_member_id) : null;
+  const family = person && person.familyId ? await getFamilyByReferenceCode(person.familyId) : null;
+
+  const [aidRows, docsResult] = family
+    ? await Promise.all([getFamilyAidHistory(family._dbId), listDocuments({ familyId: family._dbId })])
+    : [[], { total: 0 }];
+
   return {
-    user: store.users.get(session.id),
+    user: {
+      name: profile.full_name,
+      email: session.email,
+      phone: profile.phone || '',
+      status: profile.status,
+      createdAt: profile.created_at,
+    },
     person,
-    family: person && person.familyId ? select.familyWithStats(person.familyId) : null,
-    aidCount: person ? select.aidForPerson(person.id).length : 0,
-    documentCount: person ? store.documents.count((row) => row.displacedId === person.id) : 0,
+    family,
+    aidCount: aidRows.length,
+    documentCount: docsResult.total,
   };
 }
 
@@ -119,6 +137,8 @@ function view(session, { user, person, family, aidCount, documentCount }) {
                   type: 'email',
                   value: user.email,
                   required: true,
+                  hint: 'لا يمكن تغيير البريد الإلكتروني من هنا.',
+                  attrs: 'disabled aria-readonly="true"',
                 })}
                 ${inputField({
                   name: 'phone',
@@ -273,29 +293,13 @@ function wire(content, session, { user }) {
       email: [rules.required('البريد الإلكتروني'), rules.email()],
       phone: [rules.required('رقم الجوال'), rules.phone('رقم الجوال')],
     },
-    onSubmit: (values) => {
-      const taken = store.users.exists(
-        (row) => row.id !== user.id && row.email.toLowerCase() === values.email.trim().toLowerCase()
-      );
-      if (taken) {
-        setFieldError(accountForm, 'email', 'هذا البريد الإلكتروني مستخدم بالفعل.');
+    onSubmit: async (values) => {
+      try {
+        await updateOwnProfile({ full_name: values.name.trim(), phone: values.phone.trim() });
+      } catch (error) {
+        toast.error('تعذر الحفظ', error.message || 'حدث خطأ غير متوقع');
         return;
       }
-
-      store.users.update(user.id, {
-        name: values.name.trim(),
-        email: values.email.trim(),
-        phone: values.phone.trim(),
-      });
-
-      // Keep the person record's contact details in step with the account.
-      if (session.displacedId) {
-        store.displaced.update(session.displacedId, {
-          phone: values.phone.trim(),
-          email: values.email.trim(),
-        });
-      }
-
       toast.success('تم الحفظ', 'تم تحديث بيانات حسابك.');
       init({ session, content });
     },
@@ -311,14 +315,21 @@ function wire(content, session, { user }) {
         rules.matches('newPassword', 'كلمتا المرور غير متطابقتين.'),
       ],
     },
-    onSubmit: (values) => {
-      const current = store.users.get(user.id);
-      if (current.password && current.password !== values.currentPassword) {
+    onSubmit: async (values) => {
+      try {
+        await signIn(session.email, values.currentPassword);
+      } catch {
         setFieldError(passwordForm, 'currentPassword', 'كلمة المرور الحالية غير صحيحة.');
         return;
       }
 
-      store.users.update(user.id, { password: values.newPassword });
+      try {
+        await updatePassword(values.newPassword);
+      } catch (error) {
+        toast.error('تعذر التحديث', error.message || 'حدث خطأ غير متوقع');
+        return;
+      }
+
       passwordForm.reset();
       toast.success('تم التحديث', 'تم تغيير كلمة المرور بنجاح.');
     },
