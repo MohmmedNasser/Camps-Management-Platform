@@ -31,7 +31,7 @@ import { can, getSession } from '../core/auth.js';
 import * as store from '../core/store.js';
 import * as select from '../core/selectors.js';
 import { ROLES, labelOf, GENDERS, RELATIONSHIPS, TENT_TYPES, DOCUMENT_CATEGORIES } from '../core/config.js';
-import { getFamilyByReferenceCode, deleteFamily } from '../supabase/families.js';
+import { getFamilyByReferenceCode, deleteFamily, getOwnFamily } from '../supabase/families.js';
 import { getFamilyAidHistory } from '../supabase/aids.js';
 import { listDocuments } from '../supabase/documents.js';
 
@@ -76,21 +76,44 @@ function collect(session) {
     return collectReal(session, id);
   }
 
-  // A displaced person only ever sees their own family, whatever the URL says.
-  const familyId =
-    session.role === ROLES.DISPLACED
-      ? (store.displaced.get(session.displacedId) || {}).familyId
-      : id;
+  if (session.role === ROLES.DISPLACED) {
+    return collectOwn(session);
+  }
 
-  if (!familyId) return { family: null };
+  // Super Admin — unchanged mock path (out of Phase 4.13 scope).
+  if (!id) return { family: null };
 
-  const family = select.familyWithStats(familyId);
+  const family = select.familyWithStats(id);
   if (!family) return { family: null };
 
   return {
     family,
-    aid: select.aidForFamily(familyId),
-    documents: store.documents.list((row) => row.familyId === familyId).map(select.documentRow),
+    aid: select.aidForFamily(id),
+    documents: store.documents.list((row) => row.familyId === id).map(select.documentRow),
+  };
+}
+
+/**
+ * A displaced person's own family, resolved through the authenticated
+ * session only (Phase 4.13) — never `params()`. Mirrors collectReal()
+ * above (same getFamilyAidHistory()/listDocuments() calls, same local
+ * mappers) with the identity source swapped and no cross-camp check
+ * (unneeded: RLS + the identity chain already guarantee it's the caller's
+ * own family).
+ */
+async function collectOwn(session) {
+  const family = await getOwnFamily(session);
+  if (!family) return { family: null };
+
+  const [aidRows, docsResult] = await Promise.all([
+    getFamilyAidHistory(family._dbId),
+    listDocuments({ familyId: family._dbId }),
+  ]);
+
+  return {
+    family: { ...family, campName: session.campLabel },
+    aid: aidRows.map(mapAidHistoryRow),
+    documents: docsResult.rows.map(mapDocumentRow),
   };
 }
 
