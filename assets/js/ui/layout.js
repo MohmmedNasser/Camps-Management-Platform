@@ -22,6 +22,12 @@ import {
   unreadMessageCount,
   pendingRequestCount,
 } from '../core/selectors.js';
+import {
+  listNotifications,
+  unreadNotificationCount as fetchUnreadNotificationCount,
+  markAllNotificationsRead,
+  mapNotificationRow,
+} from '../supabase/notifications.js';
 import { APP_SHORT, NAVIGATION, ROLE_LABELS, ROLES } from '../core/config.js';
 
 const NOTIF_ICONS = { success: 'checkCircle', warning: 'alertTriangle', error: 'alertCircle', info: 'info' };
@@ -271,12 +277,37 @@ function wireUserMenu(session) {
 
   const readAll = qs('[data-read-all]');
   if (readAll) {
-    on(readAll, 'click', () => {
-      store.notifications
-        .list((row) => row.userId === session.id && !row.read)
-        .forEach((row) => store.notifications.update(row.id, { read: true }));
+    on(readAll, 'click', async () => {
+      if (session.role === ROLES.DISPLACED) {
+        try {
+          await markAllNotificationsRead();
+        } catch (error) {
+          console.error(error);
+        }
+      } else {
+        store.notifications
+          .list((row) => row.userId === session.id && !row.read)
+          .forEach((row) => store.notifications.update(row.id, { read: true }));
+      }
       window.location.reload();
     });
+  }
+}
+
+/** Real data for a displaced session; the existing mock selectors for every other role. */
+async function resolveNotifications(session) {
+  if (session.role !== ROLES.DISPLACED) {
+    return { notifications: notificationsFor(session.id), unread: unreadNotificationCount(session.id) };
+  }
+  try {
+    const [{ rows }, unread] = await Promise.all([
+      listNotifications({ pageSize: 5 }),
+      fetchUnreadNotificationCount(),
+    ]);
+    return { notifications: rows.map(mapNotificationRow), unread };
+  } catch (error) {
+    console.error(error);
+    return { notifications: [], unread: 0 };
   }
 }
 
@@ -295,8 +326,7 @@ export async function mountShell({ active = currentPage(), title = '' } = {}) {
     pendingRequests: pendingRequestCount(session),
     unreadMessages: unreadMessageCount(session),
   };
-  const notifications = notificationsFor(session.id);
-  const unread = unreadNotificationCount(session.id);
+  const { notifications, unread } = await resolveNotifications(session);
 
   document.body.classList.remove('app-loading');
   document.body.innerHTML = shellMarkup(session, active, badges, notifications, unread);
