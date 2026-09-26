@@ -1794,3 +1794,103 @@ The five pages Phase 4.12 flagged as its recommended next slice:
   the browser in any file this phase touched (repo-wide grep, unchanged
   from every prior phase's finding). No migration, RLS policy, trigger,
   RPC, or Edge Function was created or modified.
+
+## 30 · Phase 4.14 — Displaced dashboard/header notifications on real data
+
+The two notification surfaces Phase 4.13 explicitly deferred (§29 above,
+"stays on mock data" / "not touched, deliberately"): the displaced
+dashboard's "الإشعارات غير المقروءة" stat and `ui/layout.js`'s shared
+header bell/dropdown, now real for the displaced role. Design doc:
+`docs/superpowers/specs/2026-09-26-phase-4.14-displaced-notifications-design.md`.
+
+- **Pure reuse — no new backend, no new query.** Both surfaces are wired
+  through functions that already existed and were already correct:
+  `unreadNotificationCount()` (dashboard stat + header badge) and
+  `listNotifications({pageSize: 5})` (header dropdown's 5 most recent
+  rows) — both already RLS-derived off `recipient_id = auth.uid()`, no
+  explicit `.eq()` filter needed. `markAllNotificationsRead()` powers the
+  header's real "تعليم الكل كمقروء". Re-verified live against the project
+  before writing any code: schema, the two RLS policies
+  (`notifications_select_own`/`notifications_update_own`), and the
+  `notifications_guard_update` trigger are byte-for-byte unchanged from
+  Phase 4.13's findings.
+- **One helper promoted, not invented:** `mapNotificationRow()` was a
+  local, unexported function inside `assets/js/pages/notifications.js`;
+  it now lives in `assets/js/supabase/notifications.js`, exported, and all
+  three call sites (the notifications page, the dashboard, the header)
+  share it. No `getNotificationsForDashboard()`/`getNotificationsForHeader()`
+  duplicate was created.
+- **`assets/js/supabase/dashboard.js`'s `getDisplacedDashboard()`** gains
+  an `unreadNotifications` field, fetched via `unreadNotificationCount()`
+  in parallel with (not gated behind) family/person resolution — a
+  notification's ownership is `auth.uid()` alone, independent of whether
+  `family_member_id`/`family` resolve, so every one of the function's
+  three return branches (no `familyMemberId`, no `family.id`, no
+  resolvable `family`) still carries a real count.
+- **`assets/js/pages/dashboard.js`**'s displaced `displacedView()` reads
+  `data.unreadNotifications` instead of the mock
+  `select.unreadNotificationCount(session.id)`. Its `collect()` also drops
+  one line of dead mock code specific to the displaced branch
+  (`notifications: select.notificationsFor(session.id).slice(0, 4)` was
+  computed but never read by any of the three role views — confirmed by
+  reading the full file). Camp Admin's and Super Admin's identical dead
+  line is left untouched; out of scope.
+- **`ui/layout.js`'s `mountShell()`** now resolves notifications through a
+  new local `resolveNotifications(session)`: real data
+  (`listNotifications`/`unreadNotificationCount`) for `ROLES.DISPLACED`
+  only, the pre-existing mock `notificationsFor()`/`unreadNotificationCount()`
+  (from `core/selectors.js`) unchanged for Camp Admin/Super Admin — both
+  functions coexist under distinct import names on purpose. A real fetch
+  failure is caught and falls back to an empty list / zero badge with a
+  logged error, never a thrown exception that would blank the shared
+  header for every page. The "تعليم الكل كمقروء" handler gains the same
+  role branch, calling the real `markAllNotificationsRead()` for a
+  displaced session.
+- **Decision: Camp Admin/Super Admin header stays mock this phase**, even
+  though the same table/RLS already uniformly supports all three roles
+  (proved by Phase 4.13's `notifications.html`, itself real for all three
+  with zero role branching). The phase brief's default scope is
+  displaced-only unless a broader migration is *required* for correctness
+  — it is not: leaving both roles' header exactly as it already behaves is
+  strictly zero-risk. Recorded as a known limitation, not a backend gap.
+- **Read/unread operations implemented:** read own unread count, read own
+  5 most recent notifications, mark all own notifications read — all
+  RLS-scoped, all pre-existing functions, no change to their bodies.
+  **Not implemented (unchanged from Phase 4.13, still correctly absent):**
+  delete/dismiss (no DELETE policy on `notifications`), insert (no INSERT
+  policy — notifications are created server-side only), per-item
+  read/unread toggle in the header dropdown (never existed there, not
+  added — that control only exists on `notifications.html`), click-to-mark-read
+  on a header notification (never existed, not added — clicking still
+  just navigates).
+- **A real, previously-latent test-authoring bug found and fixed during
+  this phase's own verification:** the isolation suite's original
+  "mark-all-read never touches another account" subtest logged in as the
+  real seeded `ahmad@camps.ps` and clicked the real (now-wired) mark-all-read
+  control with no capture/restore, silently flipping two of ahmad's seeded
+  notifications from unread to read with no cleanup — a mutation of seed
+  baseline data, not of a disposable fixture. Fixed before merge: the
+  subtest now captures ahmad's own before-state alongside the other
+  account's and restores it in a `finally`, regardless of outcome; the
+  already-mutated live rows were restored via a direct service-role query
+  to the documented pre-phase baseline (`ahmad@camps.ps`: 3 total, 2
+  unread) before re-running. Re-verified twice after the fix: the baseline
+  holds after every run.
+- **Verified with two new suites:**
+  `supabase/tests/phase4.14-displaced-notifications-isolation.test.mjs`
+  (RLS-only cross-account read/update probes for all four seeded displaced
+  accounts, anonymous rejection, URL/query-string spoofing resistance,
+  mark-all-read cross-account non-interference, Camp Admin/Super Admin
+  non-regression, session preservation through opening the header
+  dropdown) and
+  `supabase/tests/phase4.14-displaced-notifications-verification.test.mjs`
+  (DB-vs-UI via an independent service-role query for all four seeded
+  displaced accounts' dashboard stat and header badge; a disposable
+  fixture account exercising the full mark-all-read cycle — initial count,
+  mark-all-read, post-action reload, an independent second reload
+  confirming persistence, and confirmation another account's rows are
+  untouched — cleaned up in a `finally`; responsive checks at six
+  breakpoints; a service-role-key browser-exposure check).
+- No `service_role` key, database password, or Cloudinary secret reaches
+  the browser in any file this phase touched. No migration, RLS policy,
+  trigger, RPC, or Edge Function was created or modified.
