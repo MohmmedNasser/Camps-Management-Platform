@@ -3,6 +3,19 @@ import { requireClient, currentUserId } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
 import { paginate } from './query.js';
 
+/** notifications row (snake_case) -> the shape every renderer (page list, dashboard stat via count only, header dropdown) reads. */
+export function mapNotificationRow(item) {
+  return {
+    id: item.id,
+    type: item.type,
+    title: item.title,
+    text: item.body,
+    createdAt: item.created_at,
+    read: item.is_read,
+    href: item.href || '',
+  };
+}
+
 export async function listNotifications({ page, pageSize } = {}) {
   const client = requireClient();
   let query = client.from('notifications').select('*', { count: 'exact' }).order('created_at', { ascending: false });

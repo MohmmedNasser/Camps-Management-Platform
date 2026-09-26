@@ -23,7 +23,7 @@ import { filterChips } from '../ui/toolbar.js';
 import { icon } from '../ui/icons.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
-import { listNotifications, markNotificationRead, markNotificationUnread, markAllNotificationsRead } from '../supabase/notifications.js';
+import { listNotifications, markNotificationRead, markNotificationUnread, markAllNotificationsRead, mapNotificationRow } from '../supabase/notifications.js';
 
 const ICONS = { success: 'checkCircle', warning: 'alertTriangle', error: 'alertCircle', info: 'info' };
 
@@ -91,19 +91,6 @@ function init({ session, content }) {
   });
 
   load(session);
-}
-
-/** notifications row (snake_case) -> the shape row()/filterChips() already read. */
-function mapNotificationRow(item) {
-  return {
-    id: item.id,
-    type: item.type,
-    title: item.title,
-    text: item.body,
-    createdAt: item.created_at,
-    read: item.is_read,
-    href: item.href || '',
-  };
 }
 
 async function load(session) {
