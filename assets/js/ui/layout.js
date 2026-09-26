@@ -15,16 +15,10 @@ import { avatar } from './components.js';
 import { confirmDialog } from './modal.js';
 import { guard, pageUrl, currentPage, go } from '../core/router.js';
 import { logout } from '../core/auth.js';
-import * as store from '../core/store.js';
-import {
-  notificationsFor,
-  unreadNotificationCount,
-  unreadMessageCount,
-  pendingRequestCount,
-} from '../core/selectors.js';
+import { unreadMessageCount, pendingRequestCount } from '../core/selectors.js';
 import {
   listNotifications,
-  unreadNotificationCount as fetchUnreadNotificationCount,
+  unreadNotificationCount,
   markAllNotificationsRead,
   mapNotificationRow,
 } from '../supabase/notifications.js';
@@ -278,31 +272,25 @@ function wireUserMenu(session) {
   const readAll = qs('[data-read-all]');
   if (readAll) {
     on(readAll, 'click', async () => {
-      if (session.role === ROLES.DISPLACED) {
-        try {
-          await markAllNotificationsRead();
-        } catch (error) {
-          console.error(error);
-        }
-      } else {
-        store.notifications
-          .list((row) => row.userId === session.id && !row.read)
-          .forEach((row) => store.notifications.update(row.id, { read: true }));
+      try {
+        await markAllNotificationsRead();
+      } catch (error) {
+        console.error(error);
       }
       window.location.reload();
     });
   }
 }
 
-/** Real data for a displaced session; the existing mock selectors for every other role. */
-async function resolveNotifications(session) {
-  if (session.role !== ROLES.DISPLACED) {
-    return { notifications: notificationsFor(session.id), unread: unreadNotificationCount(session.id) };
-  }
+/** Real Supabase notification data for every role — RLS alone scopes both
+ * reads and writes to the signed-in account (`recipient_id = auth.uid()`),
+ * verified live for camp_admin/super_admin exactly as it already was for
+ * displaced (Phase 4.14) and notifications.html (Phase 4.13). */
+async function resolveNotifications() {
   try {
     const [{ rows }, unread] = await Promise.all([
       listNotifications({ pageSize: 5 }),
-      fetchUnreadNotificationCount(),
+      unreadNotificationCount(),
     ]);
     return { notifications: rows.map(mapNotificationRow), unread };
   } catch (error) {
@@ -326,7 +314,7 @@ export async function mountShell({ active = currentPage(), title = '' } = {}) {
     pendingRequests: pendingRequestCount(session),
     unreadMessages: unreadMessageCount(session),
   };
-  const { notifications, unread } = await resolveNotifications(session);
+  const { notifications, unread } = await resolveNotifications();
 
   document.body.classList.remove('app-loading');
   document.body.innerHTML = shellMarkup(session, active, badges, notifications, unread);
