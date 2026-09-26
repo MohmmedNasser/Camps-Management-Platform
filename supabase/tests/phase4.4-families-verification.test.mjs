@@ -180,9 +180,13 @@ test('Phase 4.4 Camp Admin families: rendered list and detail match the live dat
         await page.waitForSelector('table, .empty', { timeout: 15000 });
 
         for (const family of expected) {
-          const rowLocator = page.locator(`text=${family.id}`).first();
-          await assert.doesNotReject(rowLocator.waitFor({ timeout: 5000 }), `row for ${family.id} must render`);
+          // Scoped to <tr>, not a page-wide text= search: an unscoped locator
+          // can match the header's own notification dropdown (hidden until
+          // opened) if a seeded notification's body text happens to contain
+          // the same family id substring, as it now legitimately does for
+          // admin@camps.ps since Phase 4.15 made that header real.
           const row = page.locator('tr', { has: page.getByText(family.id, { exact: true }) }).first();
+          await assert.doesNotReject(row.waitFor({ timeout: 5000 }), `row for ${family.id} must render`);
           const rowText = await row.innerText();
           assert.ok(rowText.includes(family.headName), `${email}: row ${family.id} must show head name ${family.headName}`);
           assert.ok(rowText.includes(String(family.membersCount)), `${email}: row ${family.id} must show membersCount ${family.membersCount}`);
