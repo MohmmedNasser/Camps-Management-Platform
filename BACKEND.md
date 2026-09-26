@@ -1894,3 +1894,115 @@ header bell/dropdown, now real for the displaced role. Design doc:
 - No `service_role` key, database password, or Cloudinary secret reaches
   the browser in any file this phase touched. No migration, RLS policy,
   trigger, RPC, or Edge Function was created or modified.
+
+## 31 · Phase 4.15 — Camp Admin & Super Admin header notifications on real data
+
+The Displaced-only branch Phase 4.14 deliberately left in place — the
+shared header's notification bell/dropdown stays mock for Camp Admin and
+Super Admin — is now real for both roles too. Design doc:
+`docs/superpowers/specs/2026-09-26-phase-4.15-camp-admin-super-admin-notifications-design.md`.
+
+- **The investigation, not the code, is the story this phase tells.**
+  Live inspection of `pg_policies` on `notifications` showed
+  `notifications_select_own`/`notifications_update_own` were never
+  role-restricted: both read `roles: {authenticated}` and both predicate
+  on `recipient_id = auth.uid()` alone — no `camp_admin`/`super_admin`
+  carve-out, no camp scoping, no system-wide visibility. The
+  `notifications_guard_update` trigger's `is_browser_session()` check is
+  about transport (browser vs. `service_role`), not `profiles.role`,
+  re-confirmed by re-reading its live function body. Real seeded
+  notification rows already existed for both target roles pre-phase
+  (`admin@camps.ps`: 3 total/2 unread; `super@camps.ps`: 2 total/1 unread)
+  — nothing about "a camp admin's own notifications" or "a super admin's
+  own notifications" differs in shape from "a displaced person's own
+  notifications." Every function in `assets/js/supabase/notifications.js`
+  was already role-agnostic and already proven correct for all three roles
+  by `notifications.html` since Phase 4.13.
+- **The fix is a collapse, not an addition.** `ui/layout.js`'s
+  `resolveNotifications()` — previously
+  `if (session.role !== ROLES.DISPLACED) { return mock } else { return real }`
+  — is now a single unconditional real path with no `session` parameter
+  (identity is `auth.uid()` alone). The mark-all-read handler collapsed
+  the same way. The now-dead mock imports (`notificationsFor`/
+  `unreadNotificationCount` from `core/selectors.js`, and the
+  `core/store.js` namespace import) were removed from `ui/layout.js` as a
+  direct consequence — `core/selectors.js` itself is untouched, still used
+  by `dashboard.js`'s separate, still-mock, still-out-of-scope
+  `notifications: select.notificationsFor(...)` field.
+- **A genuine RED→GREEN proof, not just a code read.** A throwaway
+  Playwright script (never committed) logged in as `admin@camps.ps`
+  against the pre-fix code and confirmed the header badge was absent and
+  the dropdown showed the mock empty state, despite the live DB already
+  having 2 unread rows for that account. The same script against the
+  post-fix code showed the real unread count and real seeded Arabic
+  titles in the dropdown. A follow-up multi-account manual smoke check
+  confirmed the badge matched the live DB exactly for every account:
+  `admin@camps.ps` 2, `super@camps.ps` 1, `nour@camps.ps` absent (real
+  empty state), and `ahmad@camps.ps` (Displaced) unchanged at 2.
+- **A DB-level domain invariant shaped test design.**
+  `profiles_single_super_admin_idx` is a unique partial index
+  (`UNIQUE (role) WHERE role = 'super_admin'`) — domain rule 1 ("exactly
+  one Super Admin") is enforced at the database level, not just the UI.
+  The verification suite's disposable mark-all-read fixture is therefore a
+  **Camp Admin**, never a second Super Admin; Super Admin's mark-all-read
+  is instead proven against the real `super@camps.ps` account with full
+  before/after state capture and restore in the isolation suite.
+- **A real bug found and fixed in this phase's own test code** (not
+  application code): the verification suite's fixture-cleanup `finally`
+  block first called `serviceClient.from('profiles').delete().eq(...).catch(() => {})`
+  — Postgrest's query builder is thenable but does not implement
+  `.catch()` directly (only a genuine `Promise`, like the Auth admin
+  client's `deleteUser()`, does), so the call threw synchronously before
+  the query's `.then()` ever ran, leaving an orphaned fixture Auth
+  user/profile (promoted to `camp_admin`) from the first, failing run.
+  Found via a direct SQL query for `phase415-fixture-%@example.com`,
+  removed with `DELETE FROM auth.users ...` (cascades to `profiles`), and
+  the test fixed to use a bare `await` on that line — the suite then ran
+  clean twice with zero leftover fixtures.
+- **A second, unrelated real bug surfaced by this phase's own behavior
+  change**, in a *pre-existing* Phase 4.4 test: `families-verification`'s
+  row-lookup used an unscoped `page.locator('text=${family.id}').first()`.
+  One of `admin@camps.ps`'s real seeded notifications
+  ("تمت إضافة أسرة جديدة... تم إنشاء الأسرة FAM-000003 بنجاح.") contains
+  the literal family id as a substring — a coincidence that was always
+  latent but harmless while that header was mock/empty. Now that Phase
+  4.15 makes the header real for Camp Admin, that notification text
+  renders (hidden, inside the closed dropdown) *earlier in the DOM* than
+  the actual table row, and `.first()` picked it, timing out waiting for
+  a hidden element to become visible. Fixed by scoping the locator to
+  `<tr>` — the exact pattern the very next line already used for the same
+  lookup. Re-ran green (15/15), then re-ran the full `test:all` suite
+  clean end to end.
+- **Read/unread/mark-all-read operations implemented:** identical to
+  Phase 4.14's list (read own unread count, read own 5 most recent
+  notifications, mark all own notifications read), now exercised for
+  `camp_admin`/`super_admin` too — all pre-existing, RLS-scoped functions,
+  zero body changes. **Not implemented, unchanged for any role:**
+  delete/dismiss (no DELETE policy), insert (no INSERT policy —
+  server-side only), per-item read/unread toggle or click-to-mark-read in
+  the header dropdown (neither ever existed there).
+- **Deliberately still deferred, out of scope:** `dashboard.js`'s own dead
+  `notifications: select.notificationsFor(session.id).slice(0, 4)` field
+  for Camp Admin/Super Admin — confirmed unused by either view function,
+  the same dead-code pattern Phase 4.14 found and removed for the
+  Displaced branch only. A dashboard-stat concern, not a header concern;
+  untouched.
+- **Verified with two new suites:**
+  `supabase/tests/phase4.15-notifications-isolation.test.mjs` (own-rows-only
+  RLS probes for both roles, cross-account read/update-zero-rows for both
+  a second Camp Admin and Super Admin attempting another account's row,
+  anonymous rejection, URL-parameter spoof resistance, mark-all-read
+  exercised live against both real seeded accounts with full before/after
+  capture-and-restore of the acting account plus two control accounts, a
+  Displaced regression check, session preservation) and
+  `supabase/tests/phase4.15-notifications-verification.test.mjs`
+  (DB-vs-UI via an independent service-role query, checked on the
+  dashboard **and** one other representative page per role — `families.html`
+  for Camp Admin, `camps.html` for Super Admin; a real zero-notification
+  account's empty state; a disposable Camp Admin fixture's full
+  mark-all-read cycle; responsive checks at six breakpoints; a
+  service-role-key browser-exposure check).
+- No `service_role` key, database password, or Cloudinary secret reaches
+  the browser in any file this phase touched. No migration, RLS policy,
+  trigger, RPC, or Edge Function was created or modified — this phase is a
+  pure frontend collapse enabled by backend behavior that already existed.
