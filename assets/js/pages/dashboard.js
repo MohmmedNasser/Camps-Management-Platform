@@ -61,11 +61,7 @@ async function collect(session) {
   // computed for them — only their own file, family, aid and notifications.
   // Phase 4.12: real data, scoped to the signed-in account's own identity.
   if (session.role === ROLES.DISPLACED) {
-    const real = await getDisplacedDashboard(session);
-    return {
-      ...real,
-      notifications: select.notificationsFor(session.id).slice(0, 4),
-    };
+    return getDisplacedDashboard(session);
   }
 
   // Phase 4.2: Super Admin reads real data.
@@ -294,7 +290,7 @@ function profileCompletion(person) {
  * family. No camp totals, no displaced-person counts, no management figures.
  */
 function displacedView(session, data) {
-  const { person, family, myAid, myDocuments } = data;
+  const { person, family, myAid, myDocuments, unreadNotifications } = data;
   const completion = profileCompletion(person);
 
   return `
@@ -323,7 +319,7 @@ function displacedView(session, data) {
       ${statCard({ label: 'أفراد الأسرة', value: formatNumber(family ? family.membersCount : 0), iconName: 'family', href: family ? pageUrl('family-details.html', { id: family.id }) : '' })}
       ${statCard({ label: 'المساعدات المستلمة', value: formatNumber(myAid.length), iconName: 'aid', tone: 'success', href: pageUrl('aid.html') })}
       ${statCard({ label: 'المستندات', value: formatNumber(myDocuments.length), iconName: 'folder', href: pageUrl('documents.html') })}
-      ${statCard({ label: 'الإشعارات غير المقروءة', value: formatNumber(select.unreadNotificationCount(session.id)), iconName: 'bell', tone: 'warning', href: pageUrl('notifications.html') })}
+      ${statCard({ label: 'الإشعارات غير المقروءة', value: formatNumber(unreadNotifications), iconName: 'bell', tone: 'warning', href: pageUrl('notifications.html') })}
     </div>
 
     <div class="split">
