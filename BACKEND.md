@@ -1644,3 +1644,153 @@ The last of the three dashboard role variants
 - No `service_role` key or other private credential reaches the browser.
   No client-controlled identity parameter (`?familyId=`, `?personId=` or
   similar) exists anywhere on this page, before or after this phase.
+
+## 29 · Phase 4.13 — Displaced Person Own Pages on real data
+
+The five pages Phase 4.12 flagged as its recommended next slice:
+`family-details.html` ("أسرتي"), `profile.html`, `documents.html`,
+`aid.html`, `notifications.html`. Design doc:
+`docs/superpowers/specs/2026-09-24-phase-4.13-displaced-own-pages-design.md`.
+
+- **Same identity chain as Phase 4.12, reused via one new composition
+  helper.** `getOwnFamily(session)` (new, `assets/js/supabase/families.js`)
+  does `session.familyMemberId` -> `getDisplacedPerson()` ->
+  `getFamilyByReferenceCode()` — the exact three steps
+  `getDisplacedDashboard()` already does inline, extracted here because
+  three *new* call sites in this phase need it (`family-details.js`,
+  `documents.js`, `aid.js`). `dashboard.js` itself is untouched — identical
+  logic, no behavior change, and touching Phase 4.12 code for no gain was
+  judged not worth the regression risk. `profile.js` does not use the
+  helper: it needs the `person` row on its own (for the read-only camp-file
+  card) in addition to the family, so it calls `getDisplacedPerson()`
+  directly and reuses `person.familyId` itself rather than paying for a
+  second fetch.
+- **`profile.html` had a pre-existing, previously-undiscovered crash for
+  every real account of every role** (not only displaced) —
+  `store.users.get(session.id)` never matches a real session's Supabase
+  Auth UUID, so `user` was `undefined` and `view()` threw on `user.name`.
+  Fixed as this phase's prerequisite by sourcing the account header from
+  `getOwnProfile()` (already existed, already used by `core/auth.js`)
+  instead of the shared session object — `profiles.phone`/`created_at` are
+  profile.html-specific, so they stay local to this page rather than
+  widening `core/auth.js`'s session shape for one page's needs. Camp
+  Admin/Super Admin now render this page correctly as a side effect; this
+  is a bugfix affecting all three roles identically, not a scope expansion.
+- **Real writes added, all through existing or newly-thin functions:**
+  - `updateOwnProfile({full_name, phone})` — already existed (Phase 2),
+    already restricted server-side to those two columns by RLS plus the
+    `profiles_guard_privileges` trigger. The profile page's email field is
+    now `disabled` with an explanatory hint, mirroring the existing
+    Camp-Admin-email-on-edit convention from `record-forms.js` (`6f01f65`)
+    — an Auth email change needs the Admin API, the same deferral Phase
+    4.11 already made for Camp Admin.
+  - `updatePassword(newPassword)` (new, `assets/js/supabase/auth.js`) wraps
+    `client.auth.updateUser({password})`. The password form's "current
+    password" field is verified by calling the existing `signIn()` first —
+    a wrong password throws the existing mapped `UNAUTHORIZED` error. Two
+    seeded-account verification runs confirmed re-authenticating as the
+    same account this way never changes `auth.uid()`.
+  - `cloudinary.uploadDocument()` (Phase 3, unchanged) now actually
+    succeeds for a displaced caller: the real bug was the frontend's
+    person-picker (`peopleFor()` in `documents.js`), which read
+    `store.displaced.get(session.displacedId)` — always empty for a real
+    session, so upload was silently unreachable, not backend-unsupported.
+    The Edge Function itself (`documents-upload`) needed **no change** —
+    re-verified live against its source: it resolves `family_member_id`
+    through the caller-scoped client, which RLS already limits to the
+    caller's own family, and the subsequent `documents` insert re-checks
+    independently through `documents_insert_scoped` (defense in depth,
+    already documented in the function's own header comment).
+- **Two new, structurally-symmetric data-access functions**, each the
+  family-scoped sibling of an existing camp-scoped one, same
+  `..._SELECT`/mapper reused unchanged:
+  - `getFamilyDocuments(familyId)` (`assets/js/supabase/documents.js`),
+    sibling of `getCampDocuments(campId)`.
+  - `getFamilyAidDistributions(familyDbId)` (`assets/js/supabase/aids.js`),
+    sibling of `getCampAidDistributions(campId)`. No top-level filter is
+    applied — RLS (`aid_distributions_select_scoped`'s
+    `is_displaced() AND private.family_receives_distribution(id)` clause)
+    already returns exactly the caller's own family's distributions, and
+    the nested `aid_distribution_families` embed is *independently*
+    RLS-scoped per row too, so a shared distribution's other beneficiary
+    families never appear in the caller's own `beneficiaries`/
+    `familyDbIds` — a displaced viewer must not learn who else received the
+    same aid. This is a stricter, more private reading of "N أسرة مستفيدة"
+    than the mock version ever gave (the mock leaked the full cross-family
+    count). `select.matchesAidFilters()` (Phase 4.6) works against this
+    function's rows unmodified — no new predicate needed, since the row
+    shape is identical to `getCampAidDistributions()`'s.
+  - `select.matchesDocumentFilters()` (Phase 4.8) likewise reused unchanged
+    for `documents.html`'s displaced branch.
+- **`notifications.html` went real for all three roles, not just
+  displaced — deliberately.** This page never had role-differentiated
+  code: `select.notificationsFor(session.id)` was keyed by mock user ids
+  and returned empty for any real session regardless of role. There was no
+  existing branch to hang a "real for displaced only" change off of, and
+  inventing one would have been artificial engineering for no behavioral
+  benefit — the alternative (leaving Camp Admin/Super Admin on an equally
+  broken mock path) is not "preserving" anything that ever worked.
+  - **Schema/RLS, confirmed live:** `notifications(id, recipient_id ->
+    profiles.id CASCADE, type, title, body, href, is_read, read_at,
+    created_at)`. Exactly two policies exist: `notifications_select_own`
+    and `notifications_update_own`, both `recipient_id = auth.uid()`. **No
+    INSERT policy, no DELETE policy exist at all** — confirmed by direct
+    query against `pg_policies`, not inferred. A `notifications_guard_update`
+    trigger (`private.guard_notification_update()`) independently rejects
+    any UPDATE that touches `recipient_id`/`title`/`body`/`type`/`href`/
+    `created_at` (`42501`) and auto-stamps `read_at` when `is_read` flips
+    true — `is_read`/`read_at` are the only columns a browser session may
+    ever change.
+  - `markNotificationUnread(id)` (new, `assets/js/supabase/notifications.js`)
+    is the exact symmetric counterpart to the already-existing
+    `markNotificationRead()`.
+  - **Delete/dismiss is intentionally absent from the real page** — both
+    the header "حذف المقروءة" button and each row's trash icon were
+    removed rather than left calling a mutation RLS would reject (or,
+    worse, silently no-op while the UI reported success). This is the one
+    write this phase found no safe backend mechanism for and deliberately
+    left out.
+  - The dashboard's "الإشعارات غير المقروءة" stat (Phase 4.12) **stays on
+    mock data** — `dashboard.js` is not touched this phase (see above); the
+    one-line wiring to the now-real `unreadNotificationCount()` is left as
+    a future micro-phase's first task.
+- **Not touched, deliberately: `ui/layout.js`'s header bell dropdown.**
+  `mountShell()` calls the same mock `notificationsFor()`/
+  `unreadNotificationCount()` on **every** page load, for **all three
+  roles** — a shared component well outside this phase's five-page scope.
+  It stays mock (silently empty for any real session, exactly as before)
+  and is recorded here as a known limitation, not fixed by this phase.
+- **RLS confirms the exact read/write matrix this phase already assumed:**
+  a displaced session has no UPDATE policy on `family_members` at all (the
+  only UPDATE policy is `family_members_update_camp_admin`) — so nothing
+  on `profile.html`'s "camp file" card was ever a candidate for a real
+  write, matching what the existing UI already communicated ("للاطلاع
+  فقط" / "طلب تحديث البيانات"); no INSERT/UPDATE/DELETE policy exists on
+  `aid_distributions`/`aid_distribution_families` for a displaced caller;
+  `documents_update_admin`/`documents_delete_admin` exclude `displaced`
+  outright, and the `documents-delete` Edge Function independently checks
+  the caller's own profile role/camp before touching Cloudinary — a
+  displaced caller was never authorized there, unchanged by this phase.
+- **Verified with two new suites:**
+  `supabase/tests/phase4.13-displaced-isolation.test.mjs` (RLS-only row
+  sets across `aid_distribution_families`/`documents`/`notifications` for
+  all four seeded displaced accounts, the same-camp-different-family case,
+  write-boundary proofs — `family_members` UPDATE, `notifications`
+  INSERT/DELETE, `aid_distributions` INSERT all independently confirmed
+  unauthorized for a displaced caller — URL-spoofing resistance on
+  `family-details.html?id=`, Camp Admin/Super Admin non-regression across
+  all five pages, and session preservation through a failed
+  password-form re-auth) and
+  `supabase/tests/phase4.13-displaced-verification.test.mjs` (DB-vs-UI via
+  an independent service-role client for all five pages, including a real
+  permitted profile name update (reverted), a real document upload
+  (cleaned up via `documents-delete` called as an authorized Camp Admin —
+  never as the displaced test account, matching the isolation suite's own
+  proof), and a real notification mark-read verifying the
+  `notifications_guard_update` trigger stamps `read_at`, restored to the
+  seeded read/unread state afterward — re-run twice back-to-back to
+  confirm the cleanup leaves the fixtures re-runnable).
+- No `service_role` key, database password, or Cloudinary secret reaches
+  the browser in any file this phase touched (repo-wide grep, unchanged
+  from every prior phase's finding). No migration, RLS policy, trigger,
+  RPC, or Edge Function was created or modified.
