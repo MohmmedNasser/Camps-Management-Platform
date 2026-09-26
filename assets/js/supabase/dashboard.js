@@ -17,6 +17,7 @@ import { listRegistrationRequests } from './registration-requests.js';
 import { getDisplacedPerson } from './family-members.js';
 import { getFamilyByReferenceCode } from './families.js';
 import { listDocuments } from './documents.js';
+import { unreadNotificationCount } from './notifications.js';
 
 function familySizeBuckets() {
   return [
@@ -246,16 +247,21 @@ function mapAidHistoryRow(row) {
   };
 }
 
-const EMPTY_DISPLACED_DASHBOARD = { person: null, family: null, myAid: [], myDocuments: [] };
+const EMPTY_DISPLACED_DASHBOARD = { person: null, family: null, myAid: [], myDocuments: [], unreadNotifications: 0 };
 
 /**
  * The full displaced-person dashboard composition: { person, family, myAid,
- * myDocuments } — the exact shape collect() already builds for this role
- * from mock selectors (Phase 4.12 spec §4), now from real data. RLS-scoped
- * to the caller's own identity throughout: family_members/families/
+ * myDocuments, unreadNotifications } — the exact shape collect() already
+ * builds for this role from mock selectors (Phase 4.12 spec §4, Phase 4.14
+ * for the notification count), now from real data. RLS-scoped to the
+ * caller's own identity throughout: family_members/families/
  * aid_distributions/documents all resolve through private.current_family_id(),
  * which is derived from profiles.family_member_id — real Auth identity
- * (Phase 4.1), never a URL or localStorage value.
+ * (Phase 4.1), never a URL or localStorage value. `unreadNotifications`
+ * is scoped independently, straight off recipient_id = auth.uid() (Phase
+ * 4.14) — a notification's ownership has nothing to do with family
+ * resolution, so it is fetched in every branch below, including the ones
+ * with no resolvable person/family.
  *
  * get_dashboard_statistics()/get_family_statistics() (what the other two
  * roles' composition functions above call) explicitly reject a displaced
@@ -267,13 +273,18 @@ export async function getDisplacedDashboard(session) {
   // status='approved' and family_member_id together, and only pending/
   // rejected/approved accounts exist — router guard already keeps anything
   // else off this page. Handled defensively anyway, never assumed impossible.
-  if (!session.familyMemberId) return EMPTY_DISPLACED_DASHBOARD;
+  if (!session.familyMemberId) {
+    return { ...EMPTY_DISPLACED_DASHBOARD, unreadNotifications: await unreadNotificationCount() };
+  }
 
-  const person = await getDisplacedPerson(session.familyMemberId);
-  if (!person || !person.familyId) return { ...EMPTY_DISPLACED_DASHBOARD, person };
+  const [person, unreadNotifications] = await Promise.all([
+    getDisplacedPerson(session.familyMemberId),
+    unreadNotificationCount(),
+  ]);
+  if (!person || !person.familyId) return { ...EMPTY_DISPLACED_DASHBOARD, person, unreadNotifications };
 
   const family = await getFamilyByReferenceCode(person.familyId);
-  if (!family) return { ...EMPTY_DISPLACED_DASHBOARD, person };
+  if (!family) return { ...EMPTY_DISPLACED_DASHBOARD, person, unreadNotifications };
 
   const [aidRows, docsResult] = await Promise.all([
     getFamilyAidHistory(family._dbId),
@@ -285,5 +296,6 @@ export async function getDisplacedDashboard(session) {
     family: { ...family, campName: session.campLabel },
     myAid: aidRows.map(mapAidHistoryRow),
     myDocuments: docsResult.rows,
+    unreadNotifications,
   };
 }
