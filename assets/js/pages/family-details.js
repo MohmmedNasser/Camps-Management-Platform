@@ -6,7 +6,7 @@
  */
 
 import { esc, params, delegate } from '../utils/dom.js';
-import { formatDate, formatAge, formatNumber, fileSize } from '../utils/format.js';
+import { formatDate, formatDateTime, formatAge, formatNumber, fileSize } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
@@ -24,7 +24,7 @@ import {
 } from '../ui/components.js';
 import { dataTable, cellMain, cellMono, rowActions } from '../ui/table.js';
 import { icon } from '../ui/icons.js';
-import { confirmDialog } from '../ui/modal.js';
+import { confirmDialog, openModal } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import { can, getSession } from '../core/auth.js';
@@ -34,6 +34,7 @@ import { ROLES, labelOf, GENDERS, RELATIONSHIPS, TENT_TYPES, DOCUMENT_CATEGORIES
 import { getFamilyByReferenceCode, deleteFamily, getOwnFamily } from '../supabase/families.js';
 import { getFamilyAidHistory } from '../supabase/aids.js';
 import { listDocuments } from '../supabase/documents.js';
+import { getActivationStatus, generateActivationLink } from '../supabase/family-activation.js';
 
 // A displaced person reaches this page through "أسرتي"; an administrator
 // through the families list — highlight whichever nav entry they came from.
@@ -198,6 +199,16 @@ function view(session, { family, aid, documents }) {
             title: `الأسرة ${family.id}`,
             description: `رب الأسرة: ${family.headName} — ${family.campName}`,
             actions: `
+              ${
+                can('family:activate')
+                  ? button({
+                      label: 'تفعيل حساب الأسرة',
+                      variant: 'secondary',
+                      iconName: 'userCheck',
+                      attrs: 'data-activate',
+                    })
+                  : ''
+              }
               ${
                 can('aid:create')
                   ? button({
@@ -385,7 +396,121 @@ function documentRow(row) {
     </a>`;
 }
 
+/* ---- Account activation (Camp Admin only) --------------------------------- */
+
+const ACTIVATION_STATE_LABELS = {
+  none: 'لا يوجد رابط بعد',
+  active: 'رابط فعّال',
+  expired: 'منتهي الصلاحية',
+  used: 'تم استخدامه',
+  revoked: 'ملغى',
+};
+
+const ACTIVATION_STATE_VARIANTS = {
+  none: 'neutral',
+  active: 'success',
+  expired: 'warning',
+  used: 'info',
+  revoked: 'error',
+};
+
+function activationLinkMarkup({ url, expiresAt }) {
+  return `
+    <div class="field u-mt-4" data-field="activationUrl">
+      <label class="field__label" for="activation-url">رابط التفعيل</label>
+      <div class="u-flex u-gap-2">
+        <input id="activation-url" class="input mono" type="text" readonly value="${esc(url)}" data-activation-url />
+        ${button({ label: 'نسخ', variant: 'secondary', iconName: 'clipboard', attrs: 'data-copy-link' })}
+      </div>
+      <p class="field__hint">صالح حتى ${esc(formatDateTime(expiresAt))}. أرسل هذا الرابط لرب الأسرة عبر واتساب أو أي وسيلة تواصل أخرى، ولا تشاركه مع أي شخص آخر.</p>
+    </div>`;
+}
+
+function activationStatusMarkup(status) {
+  if (status.state === 'activated') {
+    return `
+      <div class="u-mb-3">${badge('مُفعّل', 'success')}</div>
+      <p class="u-secondary">تم تفعيل حساب رب الأسرة، ويمكنه تسجيل الدخول مباشرة من صفحة تسجيل الدخول.</p>`;
+  }
+
+  return `
+    <div class="u-mb-3">${badge(ACTIVATION_STATE_LABELS[status.state] || status.state, ACTIVATION_STATE_VARIANTS[status.state] || 'neutral')}</div>
+    ${
+      status.expiresAt
+        ? `<p class="u-secondary u-mb-4">${status.state === 'active' ? 'ينتهي في' : 'كان ينتهي في'} ${esc(formatDateTime(status.expiresAt))}</p>`
+        : ''
+    }
+    ${button({
+      label: status.state === 'none' ? 'توليد رابط تفعيل' : 'توليد رابط تفعيل جديد',
+      variant: 'primary',
+      iconName: 'userCheck',
+      attrs: 'data-generate',
+    })}
+    ${
+      status.state === 'active'
+        ? `<p class="field__hint u-mt-2">توليد رابط جديد يُلغي الرابط الحالي فوراً.</p>`
+        : ''
+    }
+    <div id="activation-link-slot"></div>`;
+}
+
+async function openActivationModal(family) {
+  const modal = openModal({
+    title: 'تفعيل حساب الأسرة',
+    description: `الأسرة ${family.id} — رب الأسرة: ${family.headName}`,
+    body: `<div class="u-text-center u-p-4"><span class="btn__spinner"></span></div>`,
+  });
+
+  const renderStatus = async () => {
+    try {
+      const status = await getActivationStatus(family._dbId);
+      modal.element.querySelector('.modal__body').innerHTML = activationStatusMarkup(status);
+      wireGenerate();
+    } catch (error) {
+      console.error(error);
+      modal.element.querySelector('.modal__body').innerHTML = errorState({ retryAttrs: 'data-retry' });
+      delegate(modal.element, 'click', '[data-retry]', renderStatus);
+    }
+  };
+
+  const wireGenerate = () => {
+    delegate(modal.element, 'click', '[data-generate]', async (event, node) => {
+      node.disabled = true;
+      try {
+        const link = await generateActivationLink(family._dbId);
+        const slot = modal.element.querySelector('#activation-link-slot');
+        if (slot) slot.innerHTML = activationLinkMarkup(link);
+        wireCopy();
+        toast.success('تم إنشاء الرابط', 'انسخه وأرسله لرب الأسرة.');
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر إنشاء الرابط', 'حاول مرة أخرى.');
+      } finally {
+        node.disabled = false;
+      }
+    });
+  };
+
+  const wireCopy = () => {
+    delegate(modal.element, 'click', '[data-copy-link]', async () => {
+      const input = modal.element.querySelector('[data-activation-url]');
+      if (!input) return;
+      try {
+        await navigator.clipboard.writeText(input.value);
+        toast.success('تم النسخ', 'تم نسخ رابط التفعيل.');
+      } catch {
+        input.select();
+        toast.error('تعذر النسخ', 'انسخ الرابط يدوياً من الحقل.');
+      }
+    });
+  };
+
+  await renderStatus();
+}
+
 function wire(content, session, { family }) {
+  delegate(content, 'click', '[data-activate]', () => openActivationModal(family));
+
   delegate(content, 'click', '[data-delete]', async () => {
     const isCampAdmin = session.role === ROLES.CAMP_ADMIN;
     const ok = await confirmDialog({

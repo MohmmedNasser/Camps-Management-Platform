@@ -44,6 +44,11 @@ const PERMISSIONS = {
   'family:update': [ROLES.CAMP_ADMIN],
   'family:delete': [ROLES.CAMP_ADMIN],
   'family:view': [ROLES.CAMP_ADMIN, ROLES.SUPER_ADMIN, ROLES.DISPLACED],
+  // Phase 4.17: generating a family's account-activation link is a
+  // day-to-day family operation, so it follows the same Camp-Admin-only
+  // boundary as create/update/delete rather than being carved out as a
+  // Super Admin capability (design doc §7).
+  'family:activate': [ROLES.CAMP_ADMIN],
 
   'aid:create': [ROLES.CAMP_ADMIN],
   'aid:update': [ROLES.CAMP_ADMIN],

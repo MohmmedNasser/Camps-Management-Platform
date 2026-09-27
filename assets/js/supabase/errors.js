@@ -18,6 +18,7 @@ export const ErrorType = Object.freeze({
   DATABASE: 'database',
   NETWORK: 'network',
   EMAIL_NOT_CONFIRMED: 'email_not_confirmed',
+  ALREADY_ACTIVATED: 'already_activated',
 });
 
 const PG_CODE_MAP = {
@@ -40,6 +41,7 @@ const FRIENDLY_AR = {
   [ErrorType.DATABASE]: 'حدث خطأ غير متوقع، حاول مرة أخرى',
   [ErrorType.NETWORK]: 'تعذر الاتصال بالخادم. تحقق من اتصالك بالإنترنت.',
   [ErrorType.EMAIL_NOT_CONFIRMED]: 'يرجى تأكيد بريدك الإلكتروني أولاً.',
+  [ErrorType.ALREADY_ACTIVATED]: 'هذا الحساب مفعل بالفعل',
 };
 
 const ARABIC_START = /^[؀-ۿ]/;

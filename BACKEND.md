@@ -2077,3 +2077,186 @@ the Displaced dashboard has had since Phase 4.12/4.14. Design doc:
 - No `service_role` key, database password, or Cloudinary secret reaches
   the browser in any file this phase touched. No migration, RLS policy,
   trigger, RPC, or Edge Function was created or modified.
+
+## 33 · Phase 4.17 — Displaced family account activation
+
+Closes the one onboarding gap left in the platform: a Camp Admin can
+register a family (Phase 4.4/2's `create_family_with_members()`), but there
+was no way for that family's head to ever get a Supabase Auth account —
+`register.html`/`approve_registration_request()` create a *new*, unrelated
+family instead. Design doc:
+`docs/superpowers/specs/2026-09-27-phase-4.17-family-account-activation-design.md`.
+Full reasoning for every architecture decision (login identifier, identity
+fields, token design, the SQL/Edge-Function split) lives there; this section
+covers what shipped.
+
+- **New table: `private.family_activation_tokens`** (migration
+  `20260927000000_phase4_17_family_activation.sql`) — in `private`, not
+  `public`, so it is structurally unreachable via PostgREST regardless of
+  any future `GRANT` (the schema isn't in `supabase/config.toml`'s
+  `api.schemas`), stronger than "public table + RLS with no policies."
+  Columns: `family_id`/`head_member_id` (FKs, cascade), `token_hash` (sha256
+  hex, unique — the raw token is returned to the caller exactly once and
+  never stored), `expires_at`, `used_at`, `revoked_at`, `failed_attempts`.
+  State is derived from the three timestamp columns + `now()`, the same
+  convention `registration_requests`/`messages` already use. A partial
+  unique index (`family_id where used_at is null and revoked_at is null`)
+  enforces one active token per family; `generate_family_activation_token()`
+  also revokes any still-active token before inserting a new one.
+- **Four new `public.*` `SECURITY DEFINER` functions, each with a
+  deliberately different grant boundary:**
+  - `generate_family_activation_token(p_family_id, p_ttl_seconds default
+    null)` → `authenticated` only. Camp-Admin-only, own camp only —
+    re-derives `is_camp_admin() and current_camp_id() = family.camp_id` on
+    every call, the same predicate `create_family_with_members()`/
+    `create_aid_distribution()` already use. Returns the raw token + expiry
+    once. `p_ttl_seconds` (clamped to [1 second, 30 days], default 7 days)
+    exists purely for test determinism — the frontend never passes it, so
+    real usage is always the 7-day default; a Camp Admin invoking it
+    directly with a custom TTL is not a new security boundary since they
+    already fully control activation for their own camp's families.
+  - `get_family_activation_status(p_family_id)` → `authenticated` only.
+    Same authorization check, read-only — `none`/`active`/`expired`/`used`/
+    `revoked`/`activated`, never the token or its hash.
+  - `verify_family_activation(p_token, p_reference_code, p_national_id,
+    p_birth_date)` → `anon` **and** `authenticated`. Deliberately
+    anonymous-callable: the head of family has no session at this point in
+    the flow, the same trust model as a password-reset-confirm link (a
+    possession secret — the token — plus a knowledge factor — the identity
+    fields). Every rejection reason (not found / expired / revoked / used /
+    any identity-field mismatch) raises the **same** generic message,
+    `بيانات التفعيل غير صحيحة`, so a caller can never learn which check
+    failed. Does **not** mark the token used — an identity typo or an
+    "this email is taken, let me pick another" retry must never burn the
+    Camp Admin's link. A wrong identity attempt increments
+    `failed_attempts`; at 10 the token auto-revokes (same generic error
+    still returned, so the caller cannot detect the lockout).
+  - `consume_family_activation(p_token, p_new_user_id)` → **`service_role`
+    only**, never `anon`/`authenticated`. Re-locks the token row `FOR
+    UPDATE`, re-validates it is still live, sets `used_at`, and performs the
+    one `profiles` UPDATE (`status='approved'`, `camp_id`,
+    `family_member_id`, `full_name`) atomically. This is the one function in
+    the whole set that must never be browser-reachable: it trusts
+    `p_new_user_id` completely, and calling it directly with an arbitrary id
+    would let any caller re-point an unrelated profile's `family_member_id`.
+    `get_advisors` correctly does **not** flag it (no `anon`/`authenticated`
+    grant exists to flag); it does flag the other three as
+    `*_security_definer_function_executable` WARNs — the same accepted
+    pattern this project's 6 pre-existing workflow functions already carry,
+    now 9 (+`generate_family_activation_token`,
+    `get_family_activation_status`) plus a new
+    `anon_security_definer_function_executable` WARN for
+    `verify_family_activation` (intentional — see above).
+- **`auth.admin.createUser()` — the one operation needing `service_role` —
+  is isolated to a single new Edge Function, `activate-family-account`**
+  (`supabase/functions/activate-family-account/`), the project's second to
+  construct a service-role client (the first was Phase 4.11's
+  `admin-create-camp-admin`). Unlike every other Edge Function in this
+  project, **`verify_jwt: false`** — the caller has no session at all when
+  activating, so there is no JWT to require. Flow: `verify_family_
+  activation` (does not consume) → `service.auth.admin.createUser({email,
+  password, email_confirm: true})` (no email is ever sent — same
+  `email_confirm: true` pattern `admin-create-camp-admin`/`seed.mjs` already
+  use) → `consume_family_activation` (atomically consumes + links). A
+  failure at the final step (lost a race, or a genuinely unexpected error)
+  rolls back by deleting the just-created Auth user via
+  `auth.admin.deleteUser()`, mirroring `admin-create-camp-admin`'s own
+  documented rollback shape exactly. Distinct error codes
+  `already_activated` (409, shows a login link) and `email_taken` (409,
+  a plain "pick another email" form error) were added to `_shared/http.ts`'s
+  `ErrorCode` union — each function ships its own bundled copy, so no other
+  function's deployed behavior changed.
+- **Login identifier: a real, unique email collected at activation time —
+  not a change to `login.html`.** A synthetic/derived email keyed off the
+  national ID was evaluated and rejected (design doc §3): it would require
+  a secret-keyed derivation this project has no precedent for (e.g.
+  Supabase Vault), and any "resolve national ID → email" lookup exposed
+  pre-login is itself an enumeration oracle — exactly what this phase
+  otherwise goes out of its way to avoid for the identity fields. Asking
+  the activation form for a real email (pre-fillable from
+  `family_members.email` when present) needed no Auth reconfiguration, no
+  new frontend login flow, and reuses `auth.admin.createUser()`'s own
+  built-in uniqueness check.
+- **Identity verification fields: `families.reference_code` + head's
+  `national_id` + head's `birth_date`.** Chosen because the token already
+  scopes the request to one specific family/head (identity verification
+  exists only to catch a leaked/forwarded link, not to "find" a family),
+  and all three are already-collected, non-guessable-from-the-URL facts —
+  see design doc §4 for the full reasoning and the fields explicitly
+  rejected (tent/file number doesn't exist; phone is less reliably
+  collected; a name is public-ish and adds little).
+- **Frontend:** `assets/js/supabase/family-activation.js` (new) —
+  `generateActivationLink()`/`getActivationStatus()` (plain `.rpc()` calls)
+  and `activateFamilyAccount()` (`.functions.invoke()`, its own
+  `mapActivationFunctionError()` mirroring `profiles.js`'s
+  `mapCampAdminFunctionError()` convention). A new `ErrorType.
+  ALREADY_ACTIVATED` was added to `assets/js/supabase/errors.js` (the same
+  precedent as `EMAIL_NOT_CONFIRMED`: one dedicated type for one specific,
+  UI-distinguishable outcome). `core/auth.js` gained
+  `'family:activate': [ROLES.CAMP_ADMIN]` — Super Admin was deliberately
+  **not** included (design doc §7: activation is a day-to-day family
+  operation, following the same boundary as `family:create/update/delete`
+  rather than carved out as a Super Admin capability). `family-details.js`'s
+  real Camp-Admin branch gained a "تفعيل حساب الأسرة" button opening a
+  modal (`ui/modal.js`'s `openModal`) that shows current status and, once
+  generated, the URL with a copy button and its expiry — no new visual
+  pattern, same card/badge/modal/toast components already in use elsewhere
+  on that page. New page `pages/activate-family.html` /
+  `assets/js/pages/activate-family.js` — reached only via the emailed/
+  shared token URL, so it deliberately carries **no** `mountShell()`/
+  `guard()` and **no** `PAGE_ACCESS`/`NAVIGATION` entry, the same reasoning
+  `login.html`/`register.html` already establish for signed-out screens. On
+  success it calls the existing `login()` (`core/auth.js`) and redirects via
+  the existing `homeFor()` — no parallel session mechanism.
+- **Deliberately deferred (design doc §9):** Super Admin cannot generate,
+  revoke, or inspect activation links for any camp (not an oversight — see
+  above); full password/account recovery (this phase is first-activation
+  only, per the phase brief itself); changing an already-activated
+  account's login email (same Admin-API-only limitation Phase 4.11/4.13
+  already documented for Camp Admin/self accounts); network-level rate
+  limiting (the `failed_attempts` lockout bounds the specific
+  identity-guessing risk this phase introduces; a general limiter is
+  infrastructure this project has never had for any endpoint).
+- **Verified with two new suites:**
+  `supabase/tests/phase4.17-family-activation-isolation.test.mjs` (24
+  assertions: the full authorization matrix for `generate_family_
+  activation_token` including a different-camp camp_admin and a displaced
+  caller, both rejected server-side independent of `core/auth.js`'s
+  UX-only `can()`; token format/expiry/revoke-on-regenerate; every identity
+  field checked wrong independently plus a cross-family combination, all
+  collapsing to the one generic message; expired/revoked/reused/invalid
+  tokens all rejected through the real Edge Function; a genuine concurrent-
+  request race against the same token proving exactly one of two
+  simultaneous activations wins and only one profile ever links to the
+  head; the `assets/`-wide service-role secret scan) and
+  `supabase/tests/phase4.17-family-activation-verification.test.mjs` (the
+  real end-to-end flow — register a family with two members through
+  `create_family_with_members`, generate a link, activate with correct
+  identity, verify the Auth account/profile/role/camp/family linkage
+  independently via `service_role`, confirm the signed-in account's own
+  RLS-scoped queries resolve the same family with both members visible,
+  reject a second activation attempt as `already_activated`, log out and
+  log back in and confirm the same identity resolves, then a before/after
+  row-count baseline proving zero test debris). Both suites found and
+  helped fix one real bug during their own first run:
+  `generate_family_activation_token`'s original TTL floor (60 seconds)
+  silently overrode the test's requested 1-second expiry, which briefly
+  created one real, unintended test account before the floor was lowered
+  to 1 second (migration `20260927000100_phase4_17_activation_ttl_param.sql`)
+  — caught immediately because the next subtest then failed with
+  `already_activated` instead of its expected success, not silently passed.
+  The stray account was identified and removed via the Admin API before
+  re-running. Full `npm run test:all` regression was run after; one
+  **pre-existing, unrelated** failure was found in
+  `tests/phase4.5-displaced-verification.test.mjs` (a `gender=male` filter
+  assertion that reads the whole page body without accounting for
+  `PAGE_SIZE=10` pagination — the same file already carries a comment
+  acknowledging this exact trap elsewhere — now tripped because camp
+  النور's `family_members` count has grown past 10 males from accumulated
+  test/dev data across many earlier phases). Confirmed pre-existing (the
+  failing record predates this phase's first migration by roughly an hour)
+  and untouched by anything in this phase's diff; left as-is rather than
+  fixed, since editing an unrelated Phase 4.5 test/data issue is outside
+  this phase's scope.
+- No `service_role` key, database password, or Cloudinary secret reaches
+  the browser in any file this phase touched.

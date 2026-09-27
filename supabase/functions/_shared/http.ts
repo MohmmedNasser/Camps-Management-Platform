@@ -20,7 +20,14 @@ export type ErrorCode =
   | 'unsupported_type'
   | 'duplicate'
   | 'database'
-  | 'upstream';
+  | 'upstream'
+  // Phase 4.17 (activate-family-account): two distinct duplicate-shaped
+  // outcomes the frontend must tell apart (one shows a login link, the
+  // other a plain "pick a different email" form error) — each function
+  // ships its own bundled copy of this file, so this changes no other
+  // function's deployed behavior.
+  | 'already_activated'
+  | 'email_taken';
 
 export function errorResponse(status: number, code: ErrorCode, message: string): Response {
   return jsonResponse({ error: { code, message } }, status);
