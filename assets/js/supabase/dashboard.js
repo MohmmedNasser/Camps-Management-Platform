@@ -134,7 +134,7 @@ export async function getAidTypeBreakdown(campId = null) {
 export async function getSuperAdminDashboard() {
   const camps = await listCamps({});
 
-  const [globalStats, campAdmins, gender, donors, byMonth, familySizes, campRows] =
+  const [globalStats, campAdmins, gender, donors, byMonth, familySizes, campRows, unreadNotifications] =
     await Promise.all([
       getDashboardStatistics(null),
       listProfiles({ role: 'camp_admin', pageSize: 1 }),
@@ -143,6 +143,7 @@ export async function getSuperAdminDashboard() {
       getMonthlyRegistrations(null, 8),
       getFamilySizeDistribution(null),
       listCampsWithStats(),
+      unreadNotificationCount(),
     ]);
 
   return {
@@ -164,6 +165,7 @@ export async function getSuperAdminDashboard() {
     byMonth,
     familySizes,
     camps: campRows,
+    unreadNotifications,
   };
 }
 
@@ -200,7 +202,7 @@ function mapAidRow(row) {
  * camp_admin caller (verified live, spec §1).
  */
 export async function getCampAdminDashboard(campId) {
-  const [globalStats, gender, donors, byMonth, familySizes, aidByType, requestsResult, aidResult] =
+  const [globalStats, gender, donors, byMonth, familySizes, aidByType, requestsResult, aidResult, unreadNotifications] =
     await Promise.all([
       getDashboardStatistics(campId),
       getGenderBreakdown(campId),
@@ -210,6 +212,7 @@ export async function getCampAdminDashboard(campId) {
       getAidTypeBreakdown(campId),
       listRegistrationRequests({ status: 'pending', campId, pageSize: 4 }),
       listAidDistributions({ campId }, { pageSize: 5, sortBy: 'distributed_on', sortDir: 'desc' }),
+      unreadNotificationCount(),
     ]);
 
   return {
@@ -231,6 +234,7 @@ export async function getCampAdminDashboard(campId) {
     familySizes,
     requests: requestsResult.rows.map(mapRequestRow),
     recentAid: aidResult.rows.map(mapAidRow),
+    unreadNotifications,
   };
 }
 

@@ -32,7 +32,6 @@ import {
 } from '../ui/charts.js';
 import { pageUrl } from '../core/router.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
 import { ROLES, CHART_COLORS } from '../core/config.js';
 import { getSuperAdminDashboard, getCampAdminDashboard, getDisplacedDashboard } from '../supabase/dashboard.js';
 
@@ -66,19 +65,11 @@ async function collect(session) {
 
   // Phase 4.2: Super Admin reads real data.
   if (session.role === ROLES.SUPER_ADMIN) {
-    const real = await getSuperAdminDashboard();
-    return {
-      ...real,
-      notifications: select.notificationsFor(session.id).slice(0, 4),
-    };
+    return getSuperAdminDashboard();
   }
 
   // Phase 4.3: Camp Admin reads real data, scoped to their own camp.
-  const realCampAdmin = await getCampAdminDashboard(session.campId);
-  return {
-    ...realCampAdmin,
-    notifications: select.notificationsFor(session.id).slice(0, 4),
-  };
+  return getCampAdminDashboard(session.campId);
 }
 
 function loadingView() {
@@ -151,7 +142,7 @@ function ownAidRow(record) {
 /* ---- Camp Admin --------------------------------------------------------- */
 
 function campAdminView(session, data) {
-  const { stats } = data;
+  const { stats, unreadNotifications } = data;
 
   return `
     ${greeting(session, `نظرة عامة على ${session.campLabel} — ${formatDate(new Date())}`)}
@@ -165,6 +156,7 @@ function campAdminView(session, data) {
       ${statCard({ label: 'المساعدات الموزَّعة', value: formatNumber(stats.aid), iconName: 'aid', meta: `${formatNumber(stats.donors)} جهة مانحة`, href: pageUrl('aid.html') })}
       ${statCard({ label: 'ذوو الإعاقة', value: formatNumber(stats.disability), iconName: 'accessibility', tone: 'error' })}
       ${statCard({ label: 'الأمراض المزمنة', value: formatNumber(stats.chronic), iconName: 'heartPulse', tone: 'warning' })}
+      ${statCard({ label: 'الإشعارات غير المقروءة', value: formatNumber(unreadNotifications), iconName: 'bell', tone: 'warning', href: pageUrl('notifications.html') })}
     </div>
 
     <div class="grid grid--2 u-mb-6">
@@ -224,7 +216,7 @@ function campRow(camp) {
 }
 
 function superAdminView(session, data) {
-  const { stats } = data;
+  const { stats, unreadNotifications } = data;
 
   return `
     ${greeting(session, `نظرة شاملة على جميع المخيمات — ${formatDate(new Date())}`)}
@@ -240,6 +232,7 @@ function superAdminView(session, data) {
       ${statCard({ label: 'ذوو الإعاقة', value: formatNumber(stats.disability), iconName: 'accessibility', tone: 'error' })}
       ${statCard({ label: 'الأمراض المزمنة', value: formatNumber(stats.chronic), iconName: 'heartPulse', tone: 'warning' })}
       ${statCard({ label: 'طلبات التسجيل', value: formatNumber(stats.requests), iconName: 'clipboard', tone: 'warning' })}
+      ${statCard({ label: 'الإشعارات غير المقروءة', value: formatNumber(unreadNotifications), iconName: 'bell', tone: 'warning', href: pageUrl('notifications.html') })}
     </div>
 
     <div class="grid grid--2 u-mb-6">

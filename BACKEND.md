@@ -2006,3 +2006,74 @@ Super Admin — is now real for both roles too. Design doc:
   the browser in any file this phase touched. No migration, RLS policy,
   trigger, RPC, or Edge Function was created or modified — this phase is a
   pure frontend collapse enabled by backend behavior that already existed.
+
+## 32 · Phase 4.16 — Real notification stats on Camp Admin & Super Admin dashboards
+
+Phase 4.15 explicitly deferred one item: `dashboard.js`'s own dead
+`notifications: select.notificationsFor(session.id).slice(0, 4)` field for
+Camp Admin/Super Admin — fetched every load, read by neither view function.
+That field is now a real `unreadNotifications` count, rendered as a new
+"الإشعارات غير المقروءة" stat card on both dashboards, matching the card
+the Displaced dashboard has had since Phase 4.12/4.14. Design doc:
+`docs/superpowers/specs/2026-09-27-phase-4.16-dashboard-notifications-design.md`.
+
+- **Composition, not a new query.** `getSuperAdminDashboard()` and
+  `getCampAdminDashboard(campId)` (`assets/js/supabase/dashboard.js`) each
+  gained one more `Promise.all` member: the existing
+  `unreadNotificationCount()` (unchanged since Phase 4.14/4.15, still a
+  bare RLS-scoped `count` query with no parameters), returned as a
+  top-level `unreadNotifications` field — the exact shape
+  `getDisplacedDashboard()` already used. This makes all three composition
+  functions symmetric; previously only the Displaced one owned its own
+  notification fetch. No new data-access function, no new RPC.
+- **The page module got smaller, not bigger.** `assets/js/pages/dashboard.js`'s
+  `collect()` now just returns whichever composition function's promise
+  directly — the dead mock field and the `import * as select from
+  '../core/selectors.js'` import (grep-confirmed unused anywhere else in
+  the file) are both gone. `campAdminView()`/`superAdminView()` each
+  destructure `unreadNotifications` and render one more `statCard`, copied
+  verbatim from the Displaced view's existing card (same label, icon,
+  tone, href) — not a new visual pattern.
+- **RLS re-verified live, unchanged since Phase 4.15.**
+  `notifications_select_own`/`notifications_update_own` are still
+  `roles: {authenticated}`, still predicate on `recipient_id = auth.uid()`
+  alone, still the only two policies on the table, still no INSERT/DELETE
+  policy for any role. `unreadNotificationCount()` takes no
+  client-supplied recipient id — there is nothing in this call chain to
+  spoof via a URL parameter, `localStorage`, or otherwise (tested
+  directly: a fabricated `?notificationUserId=` query param and a
+  fabricated `dcmp:notificationUserId` localStorage key both leave the
+  rendered stat unchanged).
+- **The header and the dashboard still issue two independent
+  `unreadNotificationCount()` calls per page load — kept, not fixed.**
+  This duplication already existed for Displaced since Phase 4.14; this
+  phase extends the same accepted tradeoff to Camp Admin/Super Admin
+  rather than introducing a new one. Sharing the two would require either
+  widening `mountShell()`'s `{ session, content }` return contract (every
+  page depends on it) or module-level shared state — both rejected as
+  unnecessary shell/page coupling for a read that cannot disagree within
+  one page load (same session, same table, sub-second apart). The
+  verification suite asserts the two numbers agree on every load rather
+  than assuming it.
+- **Verified with two new suites:**
+  `supabase/tests/phase4.16-dashboard-notifications-isolation.test.mjs`
+  (own-count-only reads for Camp Admin/Super Admin, a fabricated query
+  param and a fabricated localStorage key both fail to change whose count
+  renders, anonymous rejection re-verified live, session preservation, a
+  Displaced regression check confirming the pre-existing card is
+  untouched) and
+  `supabase/tests/phase4.16-dashboard-notifications-verification.test.mjs`
+  (DB-vs-UI via an independent service-role query compared against both
+  the dashboard stat card **and** the header badge on the same page load,
+  for all three roles; a real zero-notification account's `0` render; a
+  disposable Camp Admin fixture's full mark-all-read cycle proving the
+  dashboard stat and header badge move together, not just the header
+  alone as Phase 4.14/4.15 proved; responsive checks at six breakpoints
+  with the stat card's extra grid slot in place; a service-role-key
+  browser-exposure check). Both suites ran RED before the frontend change
+  landed (failing exactly on the not-yet-existing stat card lookups, while
+  the pre-existing Displaced card and the unrelated RLS/session checks
+  already passed) and GREEN after, 8/8 each.
+- No `service_role` key, database password, or Cloudinary secret reaches
+  the browser in any file this phase touched. No migration, RLS policy,
+  trigger, RPC, or Edge Function was created or modified.
