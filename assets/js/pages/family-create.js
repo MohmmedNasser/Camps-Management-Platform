@@ -176,7 +176,7 @@ function view(session, camps) {
       text: 'سيُولَّد رقم الأسرة تلقائياً عند الحفظ، ولا يمكن تعديله لاحقاً. سجّل بيانات رب الأسرة ثم أضف بقية الأفراد، واحفظ الجميع دفعة واحدة.',
     })}
 
-    <form class="form u-mt-5" id="family-form" novalidate>
+    <form class="form u-mt-5" id="family-form" novalidate autocomplete="off">
       <h2 class="card__title u-mb-4">بيانات رب الأسرة</h2>
       ${displacedFields(
         { campId: session.campId },

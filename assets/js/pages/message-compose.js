@@ -54,7 +54,7 @@ function init({ session, content }) {
     <div class="u-mt-5">
       ${card({
         body: `
-          <form class="form" id="message-form" novalidate>
+          <form class="form" id="message-form" novalidate autocomplete="off">
             ${messageFields({ subject: params().subject || '' })}
             <div class="form-actions">
               ${button({ label: 'إلغاء', variant: 'secondary', href: pageUrl('messages.html') })}

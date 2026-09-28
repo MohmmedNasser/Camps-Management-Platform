@@ -52,7 +52,7 @@ export function inputField({
   iconName = '',
   mono = false,
   inputMode = '',
-  autocomplete = '',
+  autocomplete = 'off',
   attrs = '',
 }) {
   const control = `
@@ -64,7 +64,7 @@ export function inputField({
       value="${esc(value)}"
       ${placeholder ? `placeholder="${esc(placeholder)}"` : ''}
       ${inputMode ? `inputmode="${esc(inputMode)}"` : ''}
-      ${autocomplete ? `autocomplete="${esc(autocomplete)}"` : ''}
+      autocomplete="${esc(autocomplete)}"
       ${required ? 'aria-required="true"' : ''}
       ${hint ? `aria-describedby="${esc(name)}-hint"` : ''}
       ${attrs}>`;
@@ -79,7 +79,7 @@ export function inputField({
 }
 
 /** Password input with a show/hide toggle. */
-export function passwordField({ name, label, required = false, hint = '', autocomplete = 'current-password', full = false }) {
+export function passwordField({ name, label, required = false, hint = '', autocomplete = 'off', full = false }) {
   const inner = `
     ${labelMarkup(name, label, required, false)}
     <div class="input-wrap input-wrap--action">

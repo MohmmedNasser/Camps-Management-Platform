@@ -228,7 +228,7 @@ function openEditor(session, org) {
   const modal = openModal({
     title: isNew ? 'إضافة جهة مانحة' : 'تعديل الجهة المانحة',
     description: 'الاسم مطلوب؛ رقم الجوال والشخص المسؤول اختياريان.',
-    body: `<form class="field-grid" id="org-form" novalidate>${organizationFields(org || {})}</form>`,
+    body: `<form class="field-grid" id="org-form" novalidate autocomplete="off">${organizationFields(org || {})}</form>`,
     footer: `
       ${button({ label: 'إلغاء', variant: 'secondary', attrs: 'data-close' })}
       ${button({ label: isNew ? 'إضافة' : 'حفظ', variant: 'primary', type: 'submit', attrs: 'form="org-form"' })}`,

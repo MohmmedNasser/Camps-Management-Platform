@@ -44,7 +44,7 @@ function render() {
       <div class="card">
         <div class="card__body">
           <div id="login-error" class="u-mb-4 u-hidden"></div>
-          <form class="form" id="login-form" novalidate>
+          <form class="form" id="login-form" novalidate autocomplete="off">
             ${inputField({
               name: 'email',
               label: 'البريد الإلكتروني',
@@ -52,14 +52,12 @@ function render() {
               placeholder: 'name@example.ps',
               required: true,
               iconName: 'mail',
-              autocomplete: 'email',
               full: true,
             })}
             ${passwordField({
               name: 'password',
               label: 'كلمة المرور',
               required: true,
-              autocomplete: 'current-password',
               full: true,
             })}
             <div class="row row--between" style="margin-top:calc(var(--space-3) * -1)">

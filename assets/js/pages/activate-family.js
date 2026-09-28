@@ -48,7 +48,7 @@ function render() {
       <div class="card">
         <div class="card__body">
           <div id="activate-error" class="u-mb-4 u-hidden"></div>
-          <form class="form" id="activate-form" novalidate>
+          <form class="form" id="activate-form" novalidate autocomplete="off">
             ${inputField({
               name: 'referenceCode',
               label: 'رقم الأسرة',
@@ -81,12 +81,11 @@ function render() {
               type: 'email',
               placeholder: 'name@example.ps',
               required: true,
-              autocomplete: 'email',
               full: true,
               hint: 'سيُستخدم لتسجيل الدخول لاحقاً فقط — لن يُرسل إليه أي بريد.',
             })}
-            ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, autocomplete: 'new-password', hint: '6 أحرف على الأقل.', full: true })}
-            ${passwordField({ name: 'passwordConfirm', label: 'تأكيد كلمة المرور', required: true, autocomplete: 'new-password', full: true })}
+            ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, hint: '6 أحرف على الأقل.', full: true })}
+            ${passwordField({ name: 'passwordConfirm', label: 'تأكيد كلمة المرور', required: true, full: true })}
             ${button({ label: 'تفعيل الحساب', variant: 'primary', size: 'lg', block: true, type: 'submit' })}
           </form>
         </div>

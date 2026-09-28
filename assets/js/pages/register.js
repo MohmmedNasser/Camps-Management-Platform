@@ -42,14 +42,13 @@ async function render() {
 
           <div id="register-error" class="u-mt-4 u-hidden"></div>
 
-          <form class="form u-mt-5" id="register-form" novalidate>
+          <form class="form u-mt-5" id="register-form" novalidate autocomplete="off">
             <div class="field-grid">
               ${inputField({
                 name: 'fullName',
                 label: 'الاسم الكامل',
                 placeholder: 'الاسم الرباعي كما في الهوية',
                 required: true,
-                autocomplete: 'name',
                 full: true,
               })}
               ${inputField({
@@ -70,7 +69,6 @@ async function render() {
                 mono: true,
                 inputMode: 'tel',
                 placeholder: '05xxxxxxxx',
-                autocomplete: 'tel',
                 attrs: 'maxlength="10"',
               })}
               ${inputField({
@@ -78,7 +76,6 @@ async function render() {
                 label: 'البريد الإلكتروني',
                 type: 'email',
                 required: true,
-                autocomplete: 'email',
                 placeholder: 'name@example.ps',
                 full: true,
               })}
@@ -90,8 +87,8 @@ async function render() {
                 placeholder: 'اختر المخيم',
                 full: true,
               })}
-              ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, autocomplete: 'new-password', hint: '6 أحرف على الأقل.' })}
-              ${passwordField({ name: 'passwordConfirm', label: 'تأكيد كلمة المرور', required: true, autocomplete: 'new-password' })}
+              ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, hint: '6 أحرف على الأقل.' })}
+              ${passwordField({ name: 'passwordConfirm', label: 'تأكيد كلمة المرور', required: true })}
             </div>
 
             ${checkboxField({

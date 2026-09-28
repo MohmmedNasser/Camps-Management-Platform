@@ -99,7 +99,7 @@ function renderReal({ session, content, person }) {
     })}
     ${formSummary([person.fullName, person.nationalId, person.familyId])}
 
-    <form class="form" id="displaced-form" novalidate>
+    <form class="form" id="displaced-form" novalidate autocomplete="off">
       ${displacedFields(person, { camps, lockCamp: true, showFamily: false })}
       <div class="form-actions">
         ${button({
@@ -175,7 +175,7 @@ function render({ session, content, person }) {
     })}
     ${formSummary([person.fullName, person.nationalId, person.familyId])}
 
-    <form class="form" id="displaced-form" novalidate>
+    <form class="form" id="displaced-form" novalidate autocomplete="off">
       ${displacedFields(person, { camps, families, lockCamp: camps.length === 1 })}
       <div class="form-actions">
         ${button({

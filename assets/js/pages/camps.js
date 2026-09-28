@@ -282,7 +282,7 @@ function openEditor(session, camp) {
     title: isNew ? 'إضافة مخيم' : `تعديل ${camp.name}`,
     description: 'اسم المخيم وموقعه وحالته.',
     size: 'lg',
-    body: `<form class="form" id="camp-form" novalidate>${campFields(camp || {})}</form>`,
+    body: `<form class="form" id="camp-form" novalidate autocomplete="off">${campFields(camp || {})}</form>`,
     footer: `
       ${button({ label: 'إلغاء', variant: 'secondary', attrs: 'data-close' })}
       ${button({ label: isNew ? 'إضافة' : 'حفظ', variant: 'primary', type: 'submit', attrs: 'form="camp-form"' })}`,

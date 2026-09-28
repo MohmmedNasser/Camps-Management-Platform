@@ -24,7 +24,7 @@ function render() {
     body: `
       <div class="card" id="forgot-card">
         <div class="card__body">
-          <form class="form" id="forgot-form" novalidate>
+          <form class="form" id="forgot-form" novalidate autocomplete="off">
             ${inputField({
               name: 'email',
               label: 'البريد الإلكتروني',
@@ -32,7 +32,6 @@ function render() {
               required: true,
               iconName: 'mail',
               placeholder: 'name@example.ps',
-              autocomplete: 'email',
               full: true,
             })}
             ${button({ label: 'إرسال رابط الاستعادة', variant: 'primary', size: 'lg', block: true, type: 'submit' })}

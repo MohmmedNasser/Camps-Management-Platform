@@ -176,7 +176,7 @@ export function formDialog({
       title,
       description,
       size,
-      body: `<form id="modal-form" class="field-grid" novalidate>${fields}</form>`,
+      body: `<form id="modal-form" class="field-grid" novalidate autocomplete="off">${fields}</form>`,
       footer: `
         ${button({ label: cancelLabel, variant: 'secondary', attrs: 'data-close' })}
         ${button({ label: submitLabel, variant: 'primary', attrs: 'data-submit' })}`,

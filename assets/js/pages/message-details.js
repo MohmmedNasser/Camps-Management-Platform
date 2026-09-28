@@ -160,7 +160,7 @@ function view(session, { message, sender, person, history }) {
             ? card({
                 title: message.reply ? 'تعديل الرد' : 'الرد على الرسالة',
                 body: `
-                  <form class="form" id="reply-form" novalidate>
+                  <form class="form" id="reply-form" novalidate autocomplete="off">
                     ${textareaField({
                       name: 'reply',
                       label: 'نص الرد',

@@ -173,7 +173,7 @@ function alerts() {
 function formSample() {
   return card({
     body: `
-      <form class="form" novalidate onsubmit="return false">
+      <form class="form" novalidate autocomplete="off" onsubmit="return false">
         ${fieldset({
           legend: 'نموذج مختصر',
           hint: 'جميع الحقول تعرض حالة الخطأ والتلميح والنص المساعد.',
@@ -279,7 +279,7 @@ function toolbarSample() {
 function uploadSample() {
   return card({
     body: `
-      <form id="ds-upload" novalidate onsubmit="return false">
+      <form id="ds-upload" novalidate autocomplete="off" onsubmit="return false">
         <div class="field-grid">
           ${dropzone({ name: 'ds-file' })}
           ${selectField({

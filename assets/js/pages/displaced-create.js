@@ -83,7 +83,7 @@ async function initReal(session, content) {
 
     ${
       families.length
-        ? `<form class="form u-mt-5" id="displaced-form" novalidate>
+        ? `<form class="form u-mt-5" id="displaced-form" novalidate autocomplete="off">
       ${displacedFields(defaults, { camps, families: familyOptions, lockCamp: true })}
       <div class="form-actions">
         ${button({ label: 'إلغاء', variant: 'secondary', href: pageUrl('displaced.html') })}
@@ -172,7 +172,7 @@ function initMock(session, content) {
       text: 'رقم الهوية هو المعرّف الوحيد لمنع التسجيل المكرر — لا يوجد رقم ملف أو رقم خيمة في النظام. لتسجيل أسرة جديدة بكامل أفرادها استخدم صفحة إضافة أسرة.',
     })}
 
-    <form class="form u-mt-5" id="displaced-form" novalidate>
+    <form class="form u-mt-5" id="displaced-form" novalidate autocomplete="off">
       ${displacedFields(defaults, { camps, families, lockCamp: camps.length === 1 })}
       <div class="form-actions">
         ${button({ label: 'إلغاء', variant: 'secondary', href: pageUrl('displaced.html') })}

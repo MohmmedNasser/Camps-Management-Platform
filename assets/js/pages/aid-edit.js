@@ -76,7 +76,7 @@ function render({ session, content, record, organizations, families }) {
     })}
     ${formSummary([record.typeLabels, record.organizationName, `${record.beneficiaryCount} أسرة مستفيدة`])}
 
-    <form class="form" id="aid-form" novalidate>
+    <form class="form" id="aid-form" novalidate autocomplete="off">
       ${aidFields(
         { organizationId: record.organizationId, date: record.date, types: record.types },
         {

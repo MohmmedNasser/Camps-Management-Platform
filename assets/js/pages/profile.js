@@ -128,7 +128,7 @@ function view(session, { user, person, family, aidCount, documentCount }) {
         ${card({
           title: 'بيانات الحساب',
           body: `
-            <form class="form" id="account-form" novalidate>
+            <form class="form" id="account-form" novalidate autocomplete="off">
               <div class="field-grid">
                 ${inputField({ name: 'name', label: 'الاسم الكامل', value: user.name, required: true, full: true })}
                 ${inputField({
@@ -160,21 +160,19 @@ function view(session, { user, person, family, aidCount, documentCount }) {
         ${card({
           title: 'تغيير كلمة المرور',
           body: `
-            <form class="form" id="password-form" novalidate>
+            <form class="form" id="password-form" novalidate autocomplete="off">
               <div class="field-grid">
                 ${passwordField({ name: 'currentPassword', label: 'كلمة المرور الحالية', required: true, full: true })}
                 ${passwordField({
                   name: 'newPassword',
                   label: 'كلمة المرور الجديدة',
                   required: true,
-                  autocomplete: 'new-password',
                   hint: '6 أحرف على الأقل.',
                 })}
                 ${passwordField({
                   name: 'confirmPassword',
                   label: 'تأكيد كلمة المرور',
                   required: true,
-                  autocomplete: 'new-password',
                 })}
               </div>
               <div class="form-actions">

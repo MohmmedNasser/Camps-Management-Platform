@@ -388,7 +388,7 @@ function openUploader(session) {
     description: 'اختر الملف وحدد نوعه وصاحبه. لا يُطلب تاريخ انتهاء.',
     size: 'lg',
     body: `
-      <form class="field-grid" id="document-form" novalidate>
+      <form class="field-grid" id="document-form" novalidate autocomplete="off">
         ${dropzone({ name: 'file' })}
         ${documentFields({ displacedId: people.length === 1 ? people[0].value : '' }, { people })}
       </form>`,

@@ -78,7 +78,7 @@ function render({ session, content, organizations, families }) {
       text: 'إضافة المساعدات وتعديلها وحذفها من صلاحيات مسؤول المخيم فقط، ويطّلع عليها النازح دون تعديل.',
     })}
 
-    <form class="form u-mt-5" id="aid-form" novalidate>
+    <form class="form u-mt-5" id="aid-form" novalidate autocomplete="off">
       ${aidFields(
         {
           familyIds: familyId ? [familyId] : [],

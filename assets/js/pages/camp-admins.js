@@ -297,7 +297,7 @@ function openEditor(session, user) {
     title: isNew ? 'إضافة مسؤول مخيم' : `تعديل ${user.fullName}`,
     description: 'حساب إدارة مخيم واحد. مسؤول المخيم هو مندوبه المعتمد.',
     size: 'lg',
-    body: `<form class="form" id="admin-form" novalidate>${campAdminFields(
+    body: `<form class="form" id="admin-form" novalidate autocomplete="off">${campAdminFields(
       isNew ? {} : { ...user, name: user.fullName },
       { camps: state.campOptions, isNew }
     )}</form>`,
