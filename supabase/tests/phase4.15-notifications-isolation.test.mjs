@@ -174,6 +174,14 @@ test('Phase 4.15 Camp Admin/Super Admin notifications: cross-user isolation', as
     });
 
     await t.test('no notification-related URL parameter exists to spoof (Camp Admin, dashboard + families)', async () => {
+      const { data: authUsers } = await serviceClient.auth.admin.listUsers();
+      const admin = authUsers.users.find((u) => u.email === 'admin@camps.ps');
+      const { count: expectedUnread } = await serviceClient
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('recipient_id', admin.id)
+        .eq('is_read', false);
+
       for (const path of ['dashboard.html', 'families.html']) {
         const page = await browser.newPage();
         await login(page, base, 'admin@camps.ps', PASSWORD);
@@ -181,7 +189,7 @@ test('Phase 4.15 Camp Admin/Super Admin notifications: cross-user isolation', as
         await page.waitForSelector('[data-dropdown="notifications"]', { timeout: 15000 });
         const badge = page.locator('[data-dropdown="notifications"] .dropdown__trigger .count-badge');
         const badgeText = (await badge.count()) > 0 ? await badge.innerText() : '0';
-        assert.equal(badgeText, '2', `${path}: a fabricated notificationUserId query param must not change whose badge count renders (admin's own count of 2 still shows)`);
+        assert.equal(Number(badgeText), expectedUnread, `${path}: a fabricated notificationUserId query param must not change whose badge count renders (admin's own count of ${expectedUnread} still shows)`);
         await page.close();
       }
     });
@@ -246,6 +254,14 @@ test('Phase 4.15 Camp Admin/Super Admin notifications: cross-user isolation', as
     });
 
     await t.test('Displaced (ahmad) regression: Phase 4.14 header/dashboard behavior is unaffected', async () => {
+      const { data: authUsers } = await serviceClient.auth.admin.listUsers();
+      const ahmad = authUsers.users.find((u) => u.email === 'ahmad@camps.ps');
+      const { count: expectedUnread } = await serviceClient
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('recipient_id', ahmad.id)
+        .eq('is_read', false);
+
       const page = await browser.newPage();
       const consoleErrors = [];
       page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
@@ -253,7 +269,10 @@ test('Phase 4.15 Camp Admin/Super Admin notifications: cross-user isolation', as
       await page.goto(`${base}/pages/dashboard.html`, { waitUntil: 'load' });
       await page.waitForSelector('.stat', { timeout: 15000 });
       const badge = await page.locator('[data-dropdown="notifications"] .dropdown__trigger .count-badge').innerText();
-      assert.equal(badge, '2', "ahmad's header badge must still show 2 (Phase 4.14 baseline, unaffected by this phase)");
+      // Baseline is derived from the live DB, not hardcoded — Phase 4.14's
+      // literal '2' drifted once a third legitimate notification was seeded
+      // for ahmad after that phase landed (see Phase 4.18 design doc §3.2/3.3).
+      assert.equal(Number(badge), expectedUnread, `ahmad's header badge must equal the independent DB unread count (${expectedUnread})`);
       assert.deepEqual(consoleErrors, [], 'ahmad: dashboard must render with zero console errors');
       await page.close();
     });

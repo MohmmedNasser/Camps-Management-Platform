@@ -935,6 +935,13 @@ to `aids.js` for the list's aid-type/donor filters.
   queries against the same live database). Both new suites' created rows
   are deleted once their assertions finish.
 - No `service_role` key or other private credential reaches the browser.
+- **Correction (Phase 4.18):** "the suite walks every page" above was true
+  only of the unfiltered-list subtest at the time this was written; the
+  `gender=male` filter subtest did not, and eventually failed once camp
+  مخيم النور's seed data grew past `PAGE_SIZE` for that filter too. Fixed
+  in Phase 4.18 (§34) by routing that subtest through the same
+  `collectAllPagesText()` helper — no change to this phase's application
+  code was needed or made.
 
 ---
 
@@ -2260,3 +2267,79 @@ covers what shipped.
   this phase's scope.
 - No `service_role` key, database password, or Cloudinary secret reaches
   the browser in any file this phase touched.
+
+---
+
+## 34 · Phase 4.18 — Test stabilization (no application change)
+
+A test-only phase closing out the three pre-existing regression failures
+Phase 4.17 documented as out of scope (§33). Design doc:
+`docs/superpowers/specs/2026-09-27-phase-4.18-test-stabilization-design.md`;
+plan: `docs/superpowers/plans/2026-09-27-phase-4.18-test-stabilization.md`.
+
+- **All three failures were reproduced first**, individually, against the
+  live project, before any file was edited — per `systematic-debugging`,
+  no fix was written until the root cause was independently confirmed via
+  a service-role query that bypassed both the app and the failing test.
+- **Failure 1 — `tests/phase4.5-displaced-verification.test.mjs`, the
+  `gender=male` filter subtest.** Root cause: the subtest read only page 1
+  (`page.goto()` + `body.innerText()`) while its sibling "unfiltered list"
+  subtest in the same file already correctly walks every page via a local
+  helper, `collectAllPagesText()`. `displaced.js` filters before it
+  paginates, so a correct filter can still fail a single-page assertion —
+  confirmed independently: camp مخيم النور has 19 `family_members`, 12
+  `gender = 'male'` (> `PAGE_SIZE = 10`), so 2 landed on page 2. Fixed by
+  routing the subtest's assertion text through `collectAllPagesText()`
+  (already proven correct elsewhere in the same file) instead of a single
+  page read. No change to `displaced.js`, `core/selectors.js`, or
+  `PAGE_SIZE`.
+- **Failures 2 & 3 — `tests/phase4.15-notifications-isolation.test.mjs`
+  and `tests/phase4.16-dashboard-notifications-isolation.test.mjs`, each
+  one "Displaced (ahmad) regression" subtest.** Root cause: both hardcoded
+  ahmad@camps.ps's expected unread-notification badge/stat as the literal
+  `'2'`, the value true when Phase 4.14 first wrote the check. Confirmed
+  independently via `service_role`: ahmad has 3 notifications today, all
+  unread, all dated August 2026 — ordinary legitimate seed content, not
+  test debris, added at some point after Phase 4.14 landed. Fixed by
+  deriving the expected count in-subtest from an independent
+  `serviceClient` query (`notifications` filtered to the account's
+  `recipient_id` and `is_read = false`) instead of a literal — the same
+  pattern `phase4.15-notifications-verification.test.mjs` and
+  `phase4.16-dashboard-notifications-verification.test.mjs` already used
+  successfully. The same two files carried five more instances of the
+  identical fragile pattern for admin@camps.ps/super@camps.ps/
+  nour@camps.ps that happened to still pass (their live counts hadn't
+  drifted); all five were converted to the same derived-baseline pattern
+  so this failure class can't silently recur for those accounts either.
+  No shared test-utility module was extracted across files — each suite
+  keeps the existing convention of self-contained, duplicated boilerplate.
+  No change to `ui/layout.js`, `dashboard.js`, or any notification query
+  module.
+- **No application, schema, RLS policy, Edge Function, or seed-data
+  change of any kind.** Every edit in this phase is inside
+  `supabase/tests/`. All new database reads added to the isolation
+  subtests are `select(..., { count: 'exact', head: true })` — read-only,
+  no `finally`/restore needed (the existing mark-all-read subtests in the
+  same two files, which do mutate and already restore via `finally`, are
+  unmodified).
+- **Explicitly investigated but left untouched, out of scope:** an
+  unrelated `اختبار مهمة سبعة` family-member row in camp مخيم النور,
+  created 2026-08-19 (predates this phase and Phase 4.17 by weeks) — looks
+  like leftover debris from an earlier, unrelated phase's test run, not
+  cleaned up here since removing pre-existing debris from other phases is
+  a different task than "fix these three named test failures." Also noted,
+  also untouched: a `رنا عصام قديح` row whose stored `gender = 'male'`
+  reads as inconsistent with a conventionally female given name — a
+  possible seed-data quality issue with no connection to any of the three
+  failures.
+- Verified by re-running each of the three fixed suites individually
+  (`test:phase4.5-displaced`, `test:phase4.15-notifications-isolation`,
+  `test:phase4.16-dashboard-notifications-isolation`), each of their
+  sibling suites (`test:phase4.5-camp-isolation`,
+  `test:phase4.15-notifications-verification`,
+  `test:phase4.16-dashboard-notifications-verification`) to confirm no
+  regression from editing adjacent code in the same files, and then the
+  full `npm run test:all` regression.
+- No `service_role` key or other credential was added to any browser-
+  reachable file — this phase touched only Node-side test files that
+  already held `service_role` access via `.env`, unchanged.

@@ -147,9 +147,10 @@ test('Phase 4.5 Camp Admin displaced persons: rendered list and detail match the
 
         const page = await browser.newPage();
         await login(page, base, email, PASSWORD);
-        await page.goto(`${base}/pages/displaced.html?gender=male`, { waitUntil: 'load' });
-        await page.waitForSelector('table, .empty', { timeout: 15000 });
-        const bodyText = await page.locator('body').innerText();
+        // Filtering happens before pagination (displaced.js), so a camp with
+        // more than PAGE_SIZE=10 matching males needs every page walked —
+        // same trap collectAllPagesText already exists for above.
+        const bodyText = await collectAllPagesText(page, base, '/pages/displaced.html?gender=male');
 
         for (const m of males) assert.ok(bodyText.includes(m.full_name), `${email}: ${m.full_name} is male and must appear`);
         for (const f of females) assert.ok(!bodyText.includes(f.full_name), `${email}: ${f.full_name} is female and must not appear`);

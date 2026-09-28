@@ -89,6 +89,21 @@ function statCardValue(page, label) {
     .innerText();
 }
 
+/**
+ * Independent baseline, not a hardcoded literal — a live seeded account's
+ * unread count can legitimately drift over time (see Phase 4.18 design doc).
+ */
+async function expectedUnreadFor(serviceClient, email) {
+  const { data: authUsers } = await serviceClient.auth.admin.listUsers();
+  const user = authUsers.users.find((u) => u.email === email);
+  const { count } = await serviceClient
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('recipient_id', user.id)
+    .eq('is_read', false);
+  return count;
+}
+
 test('Phase 4.16 dashboard notification stat: cross-user isolation', async (t) => {
   const SUPABASE_URL = required('SUPABASE_URL');
   const SUPABASE_PUBLISHABLE_KEY = required('SUPABASE_ANON_KEY', 'SUPABASE_PUBLISHABLE_KEY');
@@ -102,6 +117,7 @@ test('Phase 4.16 dashboard notification stat: cross-user isolation', async (t) =
 
   try {
     await t.test('Camp Admin (admin@camps.ps): dashboard stat reflects only own unread count, not affected by a spoofed query param', async () => {
+      const expectedUnread = await expectedUnreadFor(serviceClient, 'admin@camps.ps');
       const page = await browser.newPage();
       const consoleErrors = [];
       page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
@@ -109,22 +125,25 @@ test('Phase 4.16 dashboard notification stat: cross-user isolation', async (t) =
       await page.goto(`${base}/pages/dashboard.html?notificationUserId=${encodeURIComponent('de97698b-bf25-4aa0-a181-039aaa55f16a')}`, { waitUntil: 'load' });
       await page.waitForSelector('.stat', { timeout: 15000 });
       const value = await statCardValue(page, 'الإشعارات غير المقروءة');
-      assert.equal(value.trim(), '2', "admin's dashboard stat must show admin's own unread count (2), unaffected by a fabricated notificationUserId query param");
+      assert.equal(Number(value.trim()), expectedUnread, `admin's dashboard stat must show admin's own unread count (${expectedUnread}), unaffected by a fabricated notificationUserId query param`);
       assert.deepEqual(consoleErrors, [], 'Camp Admin dashboard must render with zero console errors');
       await page.close();
     });
 
     await t.test('Super Admin (super@camps.ps): dashboard stat reflects only own unread count', async () => {
+      const expectedUnread = await expectedUnreadFor(serviceClient, 'super@camps.ps');
       const page = await browser.newPage();
       await login(page, base, 'super@camps.ps', PASSWORD);
       await page.goto(`${base}/pages/dashboard.html`, { waitUntil: 'load' });
       await page.waitForSelector('.stat', { timeout: 15000 });
       const value = await statCardValue(page, 'الإشعارات غير المقروءة');
-      assert.equal(value.trim(), '1', "super's dashboard stat must show super's own unread count (1)");
+      assert.equal(Number(value.trim()), expectedUnread, `super's dashboard stat must show super's own unread count (${expectedUnread})`);
       await page.close();
     });
 
     await t.test('Camp Admin B (nour@camps.ps, real zero-notification account): dashboard stat renders 0, not blank/undefined', async () => {
+      const expectedUnread = await expectedUnreadFor(serviceClient, 'nour@camps.ps');
+      assert.equal(expectedUnread, 0, "precondition: nour's live unread count must be 0 for this to test the real zero state");
       const page = await browser.newPage();
       await login(page, base, 'nour@camps.ps', PASSWORD);
       await page.goto(`${base}/pages/dashboard.html`, { waitUntil: 'load' });
@@ -135,6 +154,7 @@ test('Phase 4.16 dashboard notification stat: cross-user isolation', async (t) =
     });
 
     await t.test("localStorage tampering cannot change whose count the dashboard shows (Camp Admin)", async () => {
+      const expectedUnread = await expectedUnreadFor(serviceClient, 'admin@camps.ps');
       const page = await browser.newPage();
       await login(page, base, 'admin@camps.ps', PASSWORD);
       await page.evaluate(() => {
@@ -143,7 +163,7 @@ test('Phase 4.16 dashboard notification stat: cross-user isolation', async (t) =
       await page.goto(`${base}/pages/dashboard.html`, { waitUntil: 'load' });
       await page.waitForSelector('.stat', { timeout: 15000 });
       const value = await statCardValue(page, 'الإشعارات غير المقروءة');
-      assert.equal(value.trim(), '2', 'a fabricated localStorage value must not change whose unread count the dashboard renders');
+      assert.equal(Number(value.trim()), expectedUnread, 'a fabricated localStorage value must not change whose unread count the dashboard renders');
       await page.close();
     });
 
@@ -175,6 +195,7 @@ test('Phase 4.16 dashboard notification stat: cross-user isolation', async (t) =
     });
 
     await t.test('Displaced (ahmad) regression: existing dashboard notification stat is unaffected by this phase', async () => {
+      const expectedUnread = await expectedUnreadFor(serviceClient, 'ahmad@camps.ps');
       const page = await browser.newPage();
       const consoleErrors = [];
       page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
@@ -182,7 +203,10 @@ test('Phase 4.16 dashboard notification stat: cross-user isolation', async (t) =
       await page.goto(`${base}/pages/dashboard.html`, { waitUntil: 'load' });
       await page.waitForSelector('.stat', { timeout: 15000 });
       const value = await statCardValue(page, 'الإشعارات غير المقروءة');
-      assert.equal(value.trim(), '2', "ahmad's dashboard stat must still show 2 (Phase 4.12/4.14 baseline, unaffected by this phase)");
+      // Baseline is derived from the live DB, not hardcoded — Phase 4.12/4.14's
+      // literal '2' drifted once a third legitimate notification was seeded
+      // for ahmad (see Phase 4.18 design doc §3.2/3.3).
+      assert.equal(Number(value.trim()), expectedUnread, `ahmad's dashboard stat must equal the independent DB unread count (${expectedUnread})`);
       assert.deepEqual(consoleErrors, [], 'Displaced dashboard must render with zero console errors');
       await page.close();
     });
