@@ -4,7 +4,7 @@
  * DEVELOPMENT / TESTING ONLY. Every person, phone number, national ID and
  * password below is fictional. Never run this against production.
  *
- * It imports assets/js/data/mock-data.js directly rather than restating the
+ * It imports ./seed-fixtures.js (the fixture set that used to live in assets/js/data/mock-data.js) rather than restating the
  * fixtures, so the seeded database and the HTML/JS prototype cannot drift: this
  * file IS the executable migration map from the localStorage shapes to the
  * relational ones.
@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 
-import seed from '../../assets/js/data/mock-data.js';
+import seed from './seed-fixtures.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '../..');

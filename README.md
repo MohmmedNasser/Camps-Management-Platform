@@ -45,8 +45,9 @@ python -m http.server 3000
 ├── assets/
 │   ├── css/                    main.css يستورد باقي الملفات
 │   ├── js/
-│   │   ├── core/               config · storage · store · selectors · auth · router
-│   │   ├── data/               mock-data.js — بيانات تجريبية فقط
+│   │   ├── core/               config · store · selectors · auth · router · supabase-client
+│   │   ├── data/               demo-accounts.js — حسابات الدخول السريع فقط
+│   │   ├── supabase/           طبقة الوصول للبيانات (وحدة لكل جدول/مجال)
 │   │   ├── ui/                 layout · components · form · table · toolbar · upload
 │   │   │                       record-forms · modal · toast · charts · icons
 │   │   ├── utils/              dom · format · validators
@@ -59,8 +60,8 @@ python -m http.server 3000
 
 الترتيب مقصود لتسهيل التحويل لاحقاً إلى Next.js 16 + Supabase:
 
-- **`data/mock-data.js`** — بيانات خام فقط، بلا أي DOM.
-- **`core/store.js`** — الوحيد الذي يلمس `localStorage`. واجهة كل مجموعة (`list` / `get` / `create` / `update` / `remove`) مصمّمة على شكل استدعاءات Supabase، فيُستبدل محتوى الملف لاحقاً دون تغيير ما فوقه.
+- **`supabase/*.js`** — الطبقة الوحيدة التي تتكلم مع Supabase (قراءة/كتابة عبر عميل واحد مشترك)؛ الصلاحيات الفعلية تفرضها سياسات RLS وليس الواجهة.
+- **`core/store.js`** — دالة `load()` فقط: تغلّف النداء الحقيقي بتأخير قصير كي تبقى حالات التحميل (skeleton) ظاهرة.
 - **`core/selectors.js`** — منطق المجال (البحث، الإحصاءات، نطاق الصلاحيات).
 - **`core/auth.js`** — الجلسة وجدول الصلاحيات `can()`.
 - **`ui/*`** — مكوّنات عرض لا تعرف شيئاً عن معنى البيانات.
@@ -87,13 +88,11 @@ python -m http.server 3000
 
 ---
 
-## البيانات التجريبية
+## البيانات والحسابات التجريبية
 
-تُحفظ في `localStorage` عند أول تشغيل، وتشمل: 3 مخيمات · 5 مؤسسات · 8 أسر · 24 نازحاً · 14 مساعدة · 5 طلبات تسجيل · 12 مستنداً · 6 رسائل · 8 إشعارات.
+التطبيق يعمل على مشروع Supabase حقيقي (Auth + Postgres مع RLS + دوال Edge للمستندات). لا توجد بيانات في `localStorage` ولا زرّ لإعادة ضبطها. حسابات الدخول السريع (كلمة المرور `123456`): `admin@camps.ps` (مسؤول مخيم) · `super@camps.ps` (مدير النظام) · `ahmad@camps.ps` (نازح).
 
-البيانات مترابطة: كل نازح ينتمي إلى أسرة موجودة، ورب كل أسرة أحد أفرادها وفي المخيم نفسه، وكل مساعدة تشير إلى مؤسسة وأسرة موجودتين. يمكن التحقق من ذلك في وحدة تحكم المتصفح عبر `store.validateData()`.
-
-لإعادة ضبط البيانات: **الإعدادات ← إعادة ضبط البيانات التجريبية**، أو مسح `localStorage` من أدوات المطوّر.
+لإعادة بناء بيانات التطوير: `cd supabase && npm run seed:reset` (يقرأ `supabase/seed/seed-fixtures.js`) — للتطوير والاختبار فقط.
 
 ---
 

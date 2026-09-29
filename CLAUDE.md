@@ -71,7 +71,7 @@ The `ui/` layer beyond the primitives in `components.js`:
 
   Filters may carry a `group` and render as labelled sections. Every list page opens its filters through `toolbar({ modal: true })`, which stages selections in a sheet and commits them only on "تطبيق الفلاتر" — there is no inline instant-apply panel anywhere in the app. `activeFilters(spec, values)` + `filterSummary()` render the removable chips and the "N فلاتر نشطة" indicator from the *same* descriptor list that built the panel, so a filter cannot exist in one and be missing from the other.
 - **`utils/xlsx.js`** — a dependency-free `.xlsx` writer (stored-mode ZIP + inline-string SheetML, RTL sheet, bold frozen header). No CDN, no build step, works offline. Verified against openpyxl.
-- **`ui/upload.js`** — dropzone, previews and `readFile`. Nothing leaves the browser: images under `INLINE_LIMIT` are kept as data URLs, larger files keep metadata only so the localStorage quota survives.
+- **`ui/upload.js`** — dropzone, previews and `readFile`. It only collects and previews files in the browser; the actual upload goes through the `documents-upload` Edge Function to Cloudinary (`supabase/cloudinary.js`). Nothing is persisted to localStorage.
 - **`ui/record-forms.js`** — the field groups for each record type (`displacedFields`, `aidFields`, …) with their validation schemas beside them, so a renamed field cannot silently lose its rules. Option lists are passed in; this module never reads the store.
 
 `ui/layout.js` is the equivalent of `layout.tsx`; each file in `js/pages/` is a route component.
