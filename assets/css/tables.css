@@ -189,6 +189,13 @@
     border-bottom: 0;
   }
 
+  /* Account preference "عرض مضغوط للجداول" (html[data-dense], set by ui/layout.js). */
+  [data-dense] .table tbody td,
+  [data-dense] .table tbody td[data-primary],
+  [data-dense] .table th {
+    padding-block: var(--space-1);
+  }
+
   .table tbody td::before {
     display: none;
   }
@@ -305,4 +312,15 @@ a.record-card:hover {
 .result-bar__count strong {
   font-family: var(--font-mono);
   color: var(--color-text);
+}
+
+/* Compact preference on phones: tighter cards so more records fit per screen. */
+@media (max-width: 767px) {
+  [data-dense] .table tbody tr {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  [data-dense] .table tbody td {
+    padding-block: 0;
+  }
 }

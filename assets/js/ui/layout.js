@@ -22,6 +22,7 @@ import {
   mapNotificationRow,
 } from '../supabase/notifications.js';
 import { getUnreadMessageCount } from '../supabase/messages.js';
+import { getOwnPreferences } from '../supabase/preferences.js';
 import { getPendingRequestCount } from '../supabase/registration-requests.js';
 import { APP_SHORT, NAVIGATION, ROLE_LABELS, ROLES } from '../core/config.js';
 
@@ -335,15 +336,23 @@ async function pendingRequestCountFor(session) {
  * @param {{active?: string, title?: string}} options
  * @returns {Promise<{session: object, content: HTMLElement}|null>} null when redirected
  */
+/** Compact tables — the "عرض مضغوط للجداول" account preference. CSS keys on [data-dense]. */
+export function applyDensity(dense) {
+  document.documentElement.toggleAttribute('data-dense', dense);
+}
+
 export async function mountShell({ active = currentPage(), title = '' } = {}) {
   const session = await guard();
   if (!session) return null;
 
-  const [{ notifications, unread }, unreadMessages, pendingRequests] = await Promise.all([
+  const [{ notifications, unread }, unreadMessages, pendingRequests, preferences] = await Promise.all([
     resolveNotifications(),
     unreadMessageCountFor(session),
     pendingRequestCountFor(session),
+    getOwnPreferences().catch(() => null), // a display preference must never block the page
   ]);
+
+  applyDensity(Boolean(preferences && preferences.denseTables));
 
   const badges = {
     pendingRequests,

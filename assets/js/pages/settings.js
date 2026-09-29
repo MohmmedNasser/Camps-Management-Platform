@@ -6,7 +6,7 @@
 
 import { delegate } from '../utils/dom.js';
 import { formatNumber } from '../utils/format.js';
-import { mountShell } from '../ui/layout.js';
+import { mountShell, applyDensity } from '../ui/layout.js';
 import {
   button,
   card,
@@ -166,6 +166,7 @@ function wire(content, session) {
   delegate(content, 'change', '.switch__input', async (event, node) => {
     try {
       await updateOwnPreferences({ [node.name]: node.checked });
+      if (node.name === 'denseTables') applyDensity(node.checked);
       toast.success('تم الحفظ', 'تم تحديث تفضيلاتك.');
     } catch (error) {
       console.error(error);
