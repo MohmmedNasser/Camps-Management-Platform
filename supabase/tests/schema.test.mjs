@@ -384,7 +384,7 @@ test('a family, its head and its members are registered in one call', async () =
         },
         { full_name: 'محمد أحمد الشريف', gender: 'male', birth_date: '2011-01-09', national_id: '412318767', relationship: 'son' },
         { full_name: 'لمى أحمد الشريف', gender: 'female', birth_date: '2026-02-10', national_id: '412318769', relationship: 'daughter' },
-        { full_name: 'هناء أبو زيد', gender: 'female', birth_date: '2003-12-01', national_id: '409872146', relationship: 'daughter', father_status: 'deceased' },
+        { full_name: 'هناء أبو زيد', gender: 'female', birth_date: '2015-12-01', national_id: '409872146', relationship: 'daughter', father_status: 'deceased' },
       ]),
       '',
       w.adminA,
@@ -427,8 +427,10 @@ test('orphan status is derived from the parents and cannot be written', async ()
   const orphan = w.members.find((m) => m.full_name === 'هناء أبو زيد');
   const son = w.members.find((m) => m.full_name === 'محمد أحمد الشريف');
 
-  assert.equal(orphan.is_orphan, true, 'a deceased father did not produce an orphan');
-  assert.equal(son.is_orphan, false);
+  const flag = async (id) =>
+    (await q(`select public.is_orphan(m) as o from public.family_members m where id=$1`, [id]))[0].o;
+  assert.equal(await flag(orphan.id), true, 'a deceased father did not produce an orphan');
+  assert.equal(await flag(son.id), false);
 
   await rejects(
     `update public.family_members set is_orphan = true where id=$1`,

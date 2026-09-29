@@ -524,26 +524,38 @@ test('orphan status is derived and cannot be written', async () => {
   assert.notEqual(error, null, 'is_orphan accepted a hand-written value');
 });
 
-test('orphan status follows the parents’ status', async () => {
-  const { data: before } = await admin
+test('orphan = deceased parent AND under 18 AND unmarried', async () => {
+  const { data: member } = await admin
     .from('family_members')
-    .select('id, is_orphan, father_status, mother_status')
-    .eq('is_orphan', false)
+    .select('id, father_status, birth_date, marital_status')
+    .eq('marital_status', 'single')
     .limit(1)
     .single();
+  const restore = {
+    father_status: member.father_status,
+    birth_date: member.birth_date,
+    marital_status: member.marital_status,
+  };
+  const isOrphan = async () =>
+    (await admin.from('family_members').select('is_orphan').eq('id', member.id).single()).data.is_orphan;
+  const year = new Date().getFullYear();
 
-  await admin.from('family_members').update({ father_status: 'deceased' }).eq('id', before.id);
-  const { data: after } = await admin
-    .from('family_members')
-    .select('is_orphan')
-    .eq('id', before.id)
-    .single();
-  assert.equal(after.is_orphan, true);
+  try {
+    await admin.from('family_members')
+      .update({ father_status: 'deceased', birth_date: `${year - 10}-01-01`, marital_status: 'single' })
+      .eq('id', member.id);
+    assert.equal(await isOrphan(), true, 'unmarried minor with a deceased parent must be an orphan');
 
-  await admin
-    .from('family_members')
-    .update({ father_status: before.father_status })
-    .eq('id', before.id);
+    await admin.from('family_members').update({ birth_date: `${year - 30}-01-01` }).eq('id', member.id);
+    assert.equal(await isOrphan(), false, 'an adult is not an orphan');
+
+    await admin.from('family_members')
+      .update({ birth_date: `${year - 10}-01-01`, marital_status: 'married' })
+      .eq('id', member.id);
+    assert.equal(await isOrphan(), false, 'a married person is not an orphan');
+  } finally {
+    await admin.from('family_members').update(restore).eq('id', member.id);
+  }
 });
 
 test('maternity flags never land on a male record', async () => {

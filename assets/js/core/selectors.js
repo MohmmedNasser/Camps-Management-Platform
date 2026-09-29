@@ -58,11 +58,13 @@ export function isUnder(person, years) {
 }
 
 /**
- * A person is an orphan when either parent is recorded as deceased. This is
- * the only place orphan status is computed — nothing stores it directly.
+ * An orphan is a minor (under 18) who is unmarried and has a deceased parent.
+ * A married adult — e.g. a family head — who lost a parent is not an orphan.
+ * Mirrors public.is_orphan() in the database; nothing stores it directly.
  */
 export function isOrphan(person) {
-  return person.fatherStatus === 'deceased' || person.motherStatus === 'deceased';
+  const parentDeceased = person.fatherStatus === 'deceased' || person.motherStatus === 'deceased';
+  return parentDeceased && person.maritalStatus === 'single' && isChild(person);
 }
 
 /**

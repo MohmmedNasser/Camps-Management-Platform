@@ -185,6 +185,8 @@ export async function register(data) {
       phone: data.phone,
       email: data.email,
       campId: data.campId,
+      gender: data.gender,
+      birthDate: data.birthDate,
     });
   } catch (error) {
     return { ok: false, field: 'nationalId', error: error.message };

@@ -30,7 +30,7 @@ import { rules } from '../utils/validators.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import * as store from '../core/store.js';
-import { STATUS, GENDERS } from '../core/config.js';
+import { STATUS, GENDERS, labelOf } from '../core/config.js';
 import {
   getRegistrationRequest,
   findOwnCampDuplicate,
@@ -125,6 +125,8 @@ function view({ request, duplicate, account }) {
             definition('الاسم الكامل', request.fullName),
             definition('رقم الهوية', request.nationalId, { mono: true }),
             definition('رقم الجوال', formatPhone(request.phone), { mono: true }),
+            definition('الجنس', labelOf(GENDERS, request.gender) || '—'),
+            definition('تاريخ الميلاد', request.birthDate ? formatDate(request.birthDate) : '—'),
             definition('البريد الإلكتروني', request.email),
             definition('المخيم المطلوب', request.campName),
             definition('تاريخ تقديم الطلب', formatDateTime(request.createdAt)),
@@ -196,7 +198,12 @@ function wire(content, session, { request, duplicate }) {
       return;
     }
 
-    const values = await formDialog({
+    // Gender and birth date come from the applicant's own registration. Only
+    // requests filed before those fields existed still need them supplied here.
+    const needsDemographics = !request.gender || !request.birthDate;
+    const values = !needsDemographics
+      ? { gender: request.gender, birthDate: request.birthDate }
+      : await formDialog({
       title: 'قبول طلب التسجيل',
       description: `سيتم إنشاء سجل نازح وأسرة جديدة باسم "${request.fullName}" وتفعيل حسابه.`,
       fields:

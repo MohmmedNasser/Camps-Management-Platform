@@ -7,7 +7,7 @@ const SORT_COLUMNS = ['created_at', 'status'];
 
 const REQUEST_SELECT =
   'id, user_id, full_name, national_id, phone, email, camp_id, status, note, ' +
-  'family_member_id, reviewed_by, reviewed_at, created_at, ' +
+  'gender, birth_date, family_member_id, reviewed_by, reviewed_at, created_at, ' +
   'reviewer:profiles!registration_requests_reviewed_by_fkey(full_name)';
 
 /** DB row (snake_case, with the reviewer embed) -> the shape every page reads. */
@@ -21,6 +21,8 @@ function mapRequestRow(row, campName = '') {
     email: row.email,
     campId: row.camp_id,
     campName,
+    gender: row.gender || null,
+    birthDate: row.birth_date || null,
     status: row.status,
     note: row.note || '',
     displacedId: row.family_member_id,
@@ -135,7 +137,7 @@ export async function getPendingRequestCount(campId) {
   return count || 0;
 }
 
-export async function createRegistrationRequest({ fullName, nationalId, phone, email, campId, note = '' }) {
+export async function createRegistrationRequest({ fullName, nationalId, phone, email, campId, gender, birthDate, note = '' }) {
   const client = requireClient();
   const userId = await currentUserId();
   return run(
@@ -148,6 +150,8 @@ export async function createRegistrationRequest({ fullName, nationalId, phone, e
         phone,
         email,
         camp_id: campId,
+        gender: gender || null,
+        birth_date: birthDate || null,
         note,
       })
       .select()

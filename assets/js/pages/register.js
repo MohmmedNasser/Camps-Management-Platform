@@ -15,7 +15,7 @@ import { toast } from '../ui/toast.js';
 import { register, ProfileError } from '../core/auth.js';
 import { guestOnly } from '../core/router.js';
 import { listCamps } from '../supabase/camps.js';
-import { STATUS } from '../core/config.js';
+import { STATUS, GENDERS } from '../core/config.js';
 
 if (!(await guestOnly())) {
   ready(() => { render(); });
@@ -60,6 +60,19 @@ async function render() {
                 placeholder: '9 أرقام',
                 hint: 'رقم الهوية هو المعرّف الوحيد لمنع التسجيل المكرر.',
                 attrs: 'maxlength="9"',
+              })}
+              ${selectField({
+                name: 'gender',
+                label: 'الجنس',
+                options: GENDERS,
+                required: true,
+                placeholder: 'اختر...',
+              })}
+              ${inputField({
+                name: 'birthDate',
+                label: 'تاريخ الميلاد',
+                type: 'date',
+                required: true,
               })}
               ${inputField({
                 name: 'phone',
@@ -113,6 +126,8 @@ async function render() {
     schema: {
       fullName: [rules.required('الاسم الكامل'), rules.minLength(6, 'الاسم الكامل')],
       nationalId: [rules.required('رقم الهوية'), rules.nationalId()],
+      gender: [rules.required('الجنس')],
+      birthDate: [rules.required('تاريخ الميلاد'), rules.pastDate('تاريخ الميلاد')],
       phone: [rules.required('رقم الجوال'), rules.phone('رقم الجوال')],
       email: [rules.required('البريد الإلكتروني'), rules.email()],
       campId: [rules.required('المخيم')],
