@@ -4,12 +4,11 @@
  * Documents carry no expiry date, and there is no "proof of displacement"
  * category — both are deliberate absences in the domain.
  *
- * Camp Admin (Phase 4.8) reads/writes real Supabase + Cloudinary data end
- * to end. Super Admin and the displaced person's own document list stay on
- * the Phase 3 mock/localStorage path: a picked image is kept as a data URL
- * for the preview, and upload mirrors into localStorage (marked with
- * backendId when a real backend session exists, so download/delete still
- * route to the real Cloudinary Edge Functions for those rows).
+ * Fully real for all three roles (Camp Admin since Phase 4.8, Displaced
+ * since Phase 4.13, Super Admin closing the last gap): every row is a real
+ * Cloudinary-backed `documents` row, read through RLS-scoped queries and
+ * uploaded/deleted through the real Edge Functions. No mock/localStorage
+ * mirroring left.
  */
 
 import { esc, qs, delegate, params, setParams } from '../utils/dom.js';
@@ -35,17 +34,19 @@ import { documentFields, documentSchema } from '../ui/record-forms.js';
 import { icon } from '../ui/icons.js';
 import { toast } from '../ui/toast.js';
 import { can } from '../core/auth.js';
-import { isConfigured, currentUserId } from '../core/supabase-client.js';
+import { matchesDocumentFilters } from '../core/selectors.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
 import * as cloudinary from '../supabase/cloudinary.js';
-import { getCampDocuments, getFamilyDocuments } from '../supabase/documents.js';
-import { getCampDisplacedPersons } from '../supabase/family-members.js';
+import { getCampDocuments, getFamilyDocuments, getAllDocuments } from '../supabase/documents.js';
+import { getCampDisplacedPersons, getAllDisplacedPersons } from '../supabase/family-members.js';
 import { getOwnFamily } from '../supabase/families.js';
+import { listCampOptions } from '../supabase/camps.js';
 import { ROLES, DOCUMENT_CATEGORIES } from '../core/config.js';
 
 const state = { q: '', category: '', campId: '' };
 let campPeople = []; // Camp Admin's real person options, fetched once in init()
+let allPeople = []; // Super Admin's real, platform-wide person options, fetched once in init()
+let campOptionsCache = []; // Super Admin's real camp filter options, fetched once in init()
 let ownFamily = null; // the displaced session's own family (with members), fetched once in init()
 let currentRows = []; // last rendered rows, for the data-preview/download/delete handlers
 
@@ -61,18 +62,6 @@ function filenameWithExtension(name, mime) {
   if (/\.[a-zA-Z0-9]{2,5}$/.test(name)) return name;
   const ext = MIME_EXTENSIONS[mime];
   return ext ? `${name}.${ext}` : name;
-}
-
-/**
- * True when a real Supabase session exists — i.e. the Cloudinary Edge
- * Functions (documents-upload/-access/-delete) can actually be called.
- * Every role has a real session since Phase 4.1; this is used only by the
- * non-Camp-Admin (mock-list) upload/delete paths below, which mirror into
- * localStorage but still route a real backend session's rows through the
- * real Edge Functions for download/delete.
- */
-async function backendAvailable() {
-  return isConfigured && Boolean(await currentUserId());
 }
 
 /** Triggers a real browser download. No-ops when there is no downloadable content. */
@@ -116,7 +105,7 @@ function filterSpec(session) {
       value: state.category,
     },
     ...(isSuper
-      ? [{ name: 'campId', label: 'المخيم', options: select.campOptions(session), value: state.campId }]
+      ? [{ name: 'campId', label: 'المخيم', options: campOptionsCache, value: state.campId }]
       : []),
   ];
 }
@@ -130,6 +119,11 @@ async function init({ session, content }) {
   if (session.role === ROLES.CAMP_ADMIN) {
     content.innerHTML = skeletonTable(5);
     campPeople = (await getCampDisplacedPersons(session.campId)).map((p) => ({ value: p.id, label: p.fullName }));
+  } else if (session.role === ROLES.SUPER_ADMIN) {
+    content.innerHTML = skeletonTable(5);
+    const [people, camps] = await Promise.all([getAllDisplacedPersons(), listCampOptions()]);
+    allPeople = people.map((p) => ({ value: p.id, label: p.fullName }));
+    campOptionsCache = camps;
   } else if (session.role === ROLES.DISPLACED) {
     content.innerHTML = skeletonTable(5);
     ownFamily = await getOwnFamily(session);
@@ -195,28 +189,15 @@ async function init({ session, content }) {
     });
     if (!ok) return;
 
-    if (session.role === ROLES.CAMP_ADMIN) {
-      try {
-        await cloudinary.deleteDocumentAsset(row.id);
-        toast.success('تم الحذف', 'تم حذف المستند.');
-        load(session);
-      } catch (error) {
-        toast.error('تعذر الحذف', error.message || 'حدث خطأ غير متوقع');
-      }
-      return;
+    // document:delete is Camp Admin/Super Admin only (core/auth.js
+    // PERMISSIONS) — every row reaching here is real, so this is one path.
+    try {
+      await cloudinary.deleteDocumentAsset(row.id);
+      toast.success('تم الحذف', 'تم حذف المستند.');
+      load(session);
+    } catch (error) {
+      toast.error('تعذر الحذف', error.message || 'حدث خطأ غير متوقع');
     }
-
-    if (row.backendId) {
-      try {
-        await cloudinary.deleteDocumentAsset(row.backendId);
-      } catch (error) {
-        toast.error('تعذر الحذف', error.message || 'حدث خطأ غير متوقع');
-        return;
-      }
-    }
-    store.documents.remove(row.id);
-    toast.success('تم الحذف', 'تم حذف المستند.');
-    load(session);
   });
 
   delegate(content, 'click', '[data-clear-search]', () => {
@@ -233,30 +214,32 @@ async function init({ session, content }) {
 /* ---- Data + rendering ------------------------------------------------------ */
 
 /**
- * The single query behind the table and the summary stat. Camp Admin reads
- * real data (getCampDocuments), returning the unfiltered array too so the
- * "أنواع المستندات" stat keeps counting the whole camp regardless of the
- * active search/category filter, matching what select.documentsByCategory()
- * already guarantees for the mock branch below.
+ * The single query behind the table and the summary stat, for all three
+ * roles. `allRows` is always the unfiltered set, so the "أنواع المستندات"
+ * stat keeps counting the whole scope regardless of the active
+ * search/category/camp filter.
  */
 async function collect(session) {
   if (session.role === ROLES.CAMP_ADMIN) {
     const allRows = await getCampDocuments(session.campId);
-    const rows = allRows.filter((row) => select.matchesDocumentFilters(row, { query: state.q, category: state.category }));
+    const rows = allRows.filter((row) => matchesDocumentFilters(row, { query: state.q, category: state.category }));
     return { rows, allRows };
   }
 
   if (session.role === ROLES.DISPLACED) {
     if (!ownFamily) return { rows: [], allRows: [] };
     const allRows = await getFamilyDocuments(ownFamily._dbId);
-    const rows = allRows.filter((row) => select.matchesDocumentFilters(row, { query: state.q, category: state.category }));
+    const rows = allRows.filter((row) => matchesDocumentFilters(row, { query: state.q, category: state.category }));
     return { rows, allRows };
   }
 
-  return {
-    rows: select.searchDocuments({ query: state.q, category: state.category, campId: state.campId, session }),
-    allRows: null,
-  };
+  // campId is a scope narrowing (which camp am I looking at), applied to
+  // allRows too — unlike search/category, which only narrow the visible
+  // rows without changing what the summary stat counts against.
+  const platformRows = await getAllDocuments();
+  const allRows = state.campId ? platformRows.filter((row) => row.campId === state.campId) : platformRows;
+  const rows = allRows.filter((row) => matchesDocumentFilters(row, { query: state.q, category: state.category }));
+  return { rows, allRows };
 }
 
 async function load(session) {
@@ -269,7 +252,7 @@ async function load(session) {
     currentRows = rows;
     target.innerHTML = resultsView(session, rows);
     const summary = qs('#summary');
-    if (summary) summary.innerHTML = summaryView(session, rows, allRows);
+    if (summary) summary.innerHTML = summaryView(rows, allRows);
   } catch (error) {
     console.error(error);
     target.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -277,10 +260,8 @@ async function load(session) {
   }
 }
 
-function summaryView(session, rows, allRows = null) {
-  const byCategory = allRows
-    ? new Set(allRows.map((row) => row.category))
-    : new Set(select.documentsByCategory(session).filter((entry) => entry.count > 0).map((entry) => entry.value));
+function summaryView(rows, allRows) {
+  const byCategory = new Set(allRows.map((row) => row.category));
   const totalSize = rows.reduce((sum, row) => sum + Number(row.size || 0), 0);
 
   return `
@@ -358,21 +339,14 @@ function emptyView(session) {
 
 /* ---- Upload ---------------------------------------------------------------- */
 
-/**
- * Person options for the upload modal. Camp Admin reads the real cache
- * populated once in init() (a real Camp Admin session's mock ids/camp ids
- * never match select.personOptions()'s localStorage rows — the person
- * picker would otherwise render empty or submit a family_member_id the
- * real documents-upload function can't resolve). Displaced/Super Admin
- * keep the existing mock lookup.
- */
+/** Person options for the upload modal — each cache is populated once in
+ *  init(), since filterSpec()-style rebuilding on every open isn't needed
+ *  here (the person list doesn't change mid-session). */
 function peopleFor(session) {
   if (session.role === ROLES.CAMP_ADMIN) return campPeople;
-  if (session.role === ROLES.DISPLACED) {
-    if (!ownFamily) return [];
-    return ownFamily.members.map((member) => ({ value: member.id, label: member.fullName }));
-  }
-  return select.personOptions({ campId: '' });
+  if (session.role === ROLES.SUPER_ADMIN) return allPeople;
+  if (!ownFamily) return [];
+  return ownFamily.members.map((member) => ({ value: member.id, label: member.fullName }));
 }
 
 function openUploader(session) {
@@ -417,83 +391,19 @@ function openUploader(session) {
       const file = files[0];
       const name = values.name.trim();
 
-      // Camp Admin: the row is real, sourced from getCampDocuments() on the
-      // next load() — no mock mirroring, no localStorage record.
-      if (session.role === ROLES.CAMP_ADMIN) {
-        try {
-          await cloudinary.uploadDocument({
-            file: file.raw,
-            name,
-            category: values.category,
-            familyMemberId: values.displacedId,
-          });
-        } catch (error) {
-          toast.error('تعذر الرفع', error.message || 'حدث خطأ غير متوقع');
-          return;
-        }
-        modal.close('submit');
-        toast.success('تم الرفع', 'تمت إضافة المستند إلى الملف.');
-        load(session);
+      // Every role's row is real, sourced from the matching getXDocuments()
+      // on the next load() — no mock mirroring, no localStorage record.
+      try {
+        await cloudinary.uploadDocument({
+          file: file.raw,
+          name,
+          category: values.category,
+          familyMemberId: values.displacedId,
+        });
+      } catch (error) {
+        toast.error('تعذر الرفع', error.message || 'حدث خطأ غير متوقع');
         return;
       }
-
-      // Displaced: the row is real, sourced from getFamilyDocuments() on the
-      // next load() — no mock mirroring, no localStorage record (Phase 4.13).
-      if (session.role === ROLES.DISPLACED) {
-        try {
-          await cloudinary.uploadDocument({
-            file: file.raw,
-            name,
-            category: values.category,
-            familyMemberId: values.displacedId,
-          });
-        } catch (error) {
-          toast.error('تعذر الرفع', error.message || 'حدث خطأ غير متوقع');
-          return;
-        }
-        modal.close('submit');
-        toast.success('تم الرفع', 'تمت إضافة المستند إلى الملف.');
-        load(session);
-        return;
-      }
-
-      const person = store.displaced.get(values.displacedId);
-      const record = {
-        name,
-        category: values.category,
-        displacedId: values.displacedId,
-        familyId: person ? person.familyId : '',
-        campId: person ? person.campId : session.campId,
-        size: file.size,
-        mime: file.mime,
-        dataUrl: file.dataUrl,
-        uploadedAt: new Date().toISOString(),
-        uploadedBy: session.id,
-      };
-
-      // Super Admin/displaced sessions are real too since Phase 4.1, but
-      // their list stays mock (out of this phase's scope) — the upload
-      // still mirrors into localStorage, marked with backendId when a real
-      // backend session exists, so download/delete keep routing to the
-      // backend for those rows (see downloadDocument() and the delete
-      // handler above).
-      if (await backendAvailable()) {
-        try {
-          const uploaded = await cloudinary.uploadDocument({
-            file: file.raw,
-            name: record.name,
-            category: record.category,
-            familyMemberId: values.displacedId,
-          });
-          store.documents.create({ ...record, dataUrl: '', backendId: uploaded.id });
-        } catch (error) {
-          toast.error('تعذر الرفع', error.message || 'حدث خطأ غير متوقع');
-          return;
-        }
-      } else {
-        store.documents.create(record);
-      }
-
       modal.close('submit');
       toast.success('تم الرفع', 'تمت إضافة المستند إلى الملف.');
       load(session);

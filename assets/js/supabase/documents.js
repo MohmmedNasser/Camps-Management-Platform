@@ -57,7 +57,9 @@ export async function deleteDocumentMetadata(id) {
 }
 
 const DOCUMENT_SELECT =
-  '*, member:family_members(full_name), family:families(reference_code), uploader:profiles!documents_uploaded_by_fkey(full_name)';
+  '*, member:family_members(full_name), family:families(reference_code), ' +
+  'camp:camps!documents_camp_id_fkey(name), ' +
+  'uploader:profiles!documents_uploaded_by_fkey(full_name)';
 
 /**
  * DB row (snake_case, with the member/family/uploader embeds — all real
@@ -75,6 +77,7 @@ function mapDocumentRow(row) {
     personName: row.member?.full_name || '—',
     familyId: row.family?.reference_code || '',
     campId: row.camp_id,
+    campName: row.camp?.name || '—',
     size: row.file_size || 0,
     mime: row.mime_type || '',
     uploadedAt: row.created_at,
@@ -118,6 +121,19 @@ export async function getFamilyDocuments(familyId) {
   const client = requireClient();
   const rows = await run(
     client.from('documents').select(DOCUMENT_SELECT).eq('family_id', familyId).order('created_at', { ascending: false })
+  );
+  return rows.map(mapDocumentRow);
+}
+
+/**
+ * Every document platform-wide — the real Super Admin list. RLS
+ * (`documents_select_scoped`'s `is_super_admin()` branch) is what removes
+ * the camp boundary; no argument needed.
+ */
+export async function getAllDocuments() {
+  const client = requireClient();
+  const rows = await run(
+    client.from('documents').select(DOCUMENT_SELECT).order('created_at', { ascending: false })
   );
   return rows.map(mapDocumentRow);
 }

@@ -31,8 +31,25 @@ import {
   legendItems,
 } from '../ui/charts.js';
 import { pageUrl } from '../core/router.js';
-import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import {
+  statistics,
+  displacedByMonth,
+  aidByType,
+  aidByOrganization,
+  aidCountByMonth,
+  familySizeDistribution,
+  ageDistribution,
+  workStatusDistribution,
+  tentTypeDistribution,
+  originDistribution,
+  topFamiliesByAid,
+  documentsByCategory,
+} from '../core/selectors.js';
+import { getAllDisplacedPersons } from '../supabase/family-members.js';
+import { getAllFamilies } from '../supabase/families.js';
+import { getAllAidDistributions } from '../supabase/aids.js';
+import { getAllDocuments } from '../supabase/documents.js';
+import { listCampsWithStats } from '../supabase/camps.js';
 import { CHART_COLORS } from '../core/config.js';
 
 const shell = await mountShell({ active: 'statistics.html', title: 'الإحصائيات' });
@@ -45,7 +62,7 @@ async function init({ session, content }) {
     <div class="grid grid--2">${skeletonChart()}${skeletonChart()}</div>`;
 
   try {
-    const data = await store.load(() => collect(session));
+    const data = await collect();
 
     if (!data.stats.displaced && !data.camps.length) {
       content.innerHTML = `
@@ -68,21 +85,29 @@ async function init({ session, content }) {
   }
 }
 
-function collect(session) {
+async function collect() {
+  const [people, families, aidRows, documents, camps] = await Promise.all([
+    getAllDisplacedPersons(),
+    getAllFamilies(),
+    getAllAidDistributions(),
+    getAllDocuments(),
+    listCampsWithStats(),
+  ]);
+
   return {
-    stats: select.statistics(session),
-    camps: select.campBreakdown(),
-    byMonth: select.displacedByMonth(session, 8),
-    aidByType: select.aidByType(session),
-    aidByOrganization: select.aidByOrganization(session),
-    aidCountByMonth: select.aidCountByMonth(session, 8),
-    familySizes: select.familySizeDistribution(session),
-    ages: select.ageDistribution(session),
-    work: select.workStatusDistribution(session),
-    tents: select.tentTypeDistribution(session),
-    origins: select.originDistribution(session),
-    topFamilies: select.topFamiliesByAid(session, 5),
-    documents: select.documentsByCategory(session).filter((entry) => entry.count > 0),
+    stats: statistics({ people, families, aidRows, documents, camps }),
+    camps,
+    byMonth: displacedByMonth(people, 8),
+    aidByType: aidByType(aidRows),
+    aidByOrganization: aidByOrganization(aidRows),
+    aidCountByMonth: aidCountByMonth(aidRows, 8),
+    familySizes: familySizeDistribution(families),
+    ages: ageDistribution(people),
+    work: workStatusDistribution(people),
+    tents: tentTypeDistribution(people),
+    origins: originDistribution(people),
+    topFamilies: topFamiliesByAid(aidRows, 5),
+    documents: documentsByCategory(documents).filter((entry) => entry.count > 0),
   };
 }
 

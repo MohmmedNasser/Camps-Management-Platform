@@ -69,6 +69,7 @@ function mapDisplacedRow(row) {
   return {
     id: row.id,
     campId: row.camp_id,
+    campName: row.camp?.name || '—',
     familyId: row.family?.reference_code || '',
     familyLabel: row.family?.reference_code || '—',
     fullName: row.full_name,
@@ -105,7 +106,20 @@ function mapDisplacedRow(row) {
   };
 }
 
-const DISPLACED_SELECT = '*, family:families!family_members_family_id_fkey(reference_code)';
+const DISPLACED_SELECT =
+  '*, family:families!family_members_family_id_fkey(reference_code), ' +
+  'camp:camps!family_members_camp_id_fkey(name)';
+
+/**
+ * Every displaced person platform-wide — the real Super Admin list (Phase
+ * 4.19 follow-up). RLS (`family_members_select_scoped`: `is_super_admin()`)
+ * is what actually removes the camp boundary; no argument is needed.
+ */
+export async function getAllDisplacedPersons() {
+  const client = requireClient();
+  const rows = await run(client.from('family_members').select(DISPLACED_SELECT));
+  return rows.map(mapDisplacedRow);
+}
 
 /**
  * Every displaced person in one camp. RLS (`family_members_select_scoped`:

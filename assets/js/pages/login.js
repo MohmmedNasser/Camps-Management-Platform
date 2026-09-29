@@ -13,7 +13,7 @@ import { icon } from '../ui/icons.js';
 import { toast } from '../ui/toast.js';
 import { login, ProfileError } from '../core/auth.js';
 import { guestOnly, homeFor } from '../core/router.js';
-import { demoAccounts } from '../data/mock-data.js';
+import { demoAccounts } from '../data/demo-accounts.js';
 import { ROLE_LABELS } from '../core/config.js';
 
 if (!(await guestOnly())) {

@@ -1,44 +1,57 @@
 /**
  * Settings.
  *
- * Notification preferences per account, plus the demo dataset controls that
- * make the prototype reviewable: restore the seed data, or empty it to inspect
- * every empty state in the app.
+ * Notification and display preferences per account.
  */
 
 import { delegate } from '../utils/dom.js';
+import { formatNumber } from '../utils/format.js';
 import { mountShell } from '../ui/layout.js';
 import {
   button,
   card,
-  alert,
   badge,
   errorState,
   skeletonForm,
   pageHeader,
   definition,
   definitionList,
+  statCard,
 } from '../ui/components.js';
 import { switchField } from '../ui/form.js';
-import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
-import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import { getOwnPreferences, updateOwnPreferences } from '../supabase/preferences.js';
+import { getDashboardStatistics, getDocumentCount } from '../supabase/statistics.js';
 import { ROLES, ROLE_LABELS, APP_NAME } from '../core/config.js';
 
 const shell = await mountShell({ active: 'settings.html', title: 'الإعدادات' });
 if (shell) init(shell);
 
+/** get_dashboard_statistics() raises for a displaced caller (private.is_displaced()
+ *  check), and "محتوى النظام" never renders for that role anyway — skip the
+ *  fetch entirely rather than catching an expected error. */
+async function loadStats(session) {
+  if (session.role === ROLES.DISPLACED) return null;
+  const campId = session.role === ROLES.CAMP_ADMIN ? session.campId : null;
+  const [dashboard, documents] = await Promise.all([
+    getDashboardStatistics(campId),
+    getDocumentCount(campId),
+  ]);
+  return {
+    displaced: Number(dashboard?.total_members) || 0,
+    families: Number(dashboard?.total_families) || 0,
+    aid: Number(dashboard?.aid_distributions) || 0,
+    documents,
+  };
+}
+
 async function init({ session, content }) {
   content.innerHTML = skeletonForm(4);
 
   try {
-    const data = await store.load(() => ({
-      preferences: store.preferences.get(session.id),
-      stats: select.statistics(session),
-    }));
-    content.innerHTML = view(session, data);
+    const [preferences, stats] = await Promise.all([getOwnPreferences(), loadStats(session)]);
+    content.innerHTML = view(session, { preferences, stats });
     wire(content, session);
   } catch (error) {
     console.error(error);
@@ -53,7 +66,7 @@ function view(session, { preferences, stats }) {
   return `
     ${pageHeader({
       title: 'الإعدادات',
-      description: 'تفضيلات الإشعارات وبيانات النموذج التجريبي.',
+      description: 'تفضيلات الإشعارات والعرض.',
     })}
 
     <div class="split">
@@ -102,22 +115,6 @@ function view(session, { preferences, stats }) {
           }),
         })}
 
-        ${card({
-          title: 'بيانات النموذج التجريبي',
-          body: `
-            ${alert({
-              variant: 'warning',
-              title: 'نموذج أولي',
-              text: 'هذه نسخة واجهة فقط: البيانات محفوظة في متصفحك ولا تُرسل إلى أي خادم. أي إعادة ضبط تؤثر على هذا الجهاز وحده.',
-            })}
-            <div class="row u-gap-3 u-wrap u-mt-4">
-              ${button({ label: 'إعادة ضبط البيانات التجريبية', variant: 'secondary', iconName: 'refresh', attrs: 'data-reset' })}
-              ${button({ label: 'إفراغ السجلات', variant: 'danger', iconName: 'trash', attrs: 'data-clear' })}
-            </div>
-            <p class="u-xs u-muted u-mt-3">
-              «إعادة الضبط» تستعيد البيانات الأصلية، و«إفراغ السجلات» يمسح كل السجلات مع الإبقاء على المخيمات لمراجعة الحالات الفارغة.
-            </p>`,
-        })}
       </div>
 
       <aside class="split__aside stack">
@@ -138,15 +135,19 @@ function view(session, { preferences, stats }) {
           }),
         })}
 
-        ${card({
-          title: 'محتوى النظام',
-          body: definitionList([
-            definition('النازحون', String(stats.displaced)),
-            definition('الأسر', String(stats.families)),
-            definition('المساعدات', String(stats.aid)),
-            definition('المستندات', String(stats.documents)),
-          ]),
-        })}
+        ${
+          isDisplaced
+            ? ''
+            : card({
+                title: 'محتوى النظام',
+                body: `<div class="grid grid--2">
+            ${statCard({ label: 'النازحون', value: formatNumber(stats.displaced), iconName: 'users' })}
+            ${statCard({ label: 'الأسر', value: formatNumber(stats.families), iconName: 'family', tone: 'success' })}
+            ${statCard({ label: 'المساعدات', value: formatNumber(stats.aid), iconName: 'aid', tone: 'warning' })}
+            ${statCard({ label: 'المستندات', value: formatNumber(stats.documents), iconName: 'folder' })}
+          </div>`,
+              })
+        }
 
         ${card({
           title: 'عن المنصة',
@@ -162,32 +163,14 @@ function view(session, { preferences, stats }) {
 }
 
 function wire(content, session) {
-  delegate(content, 'change', '.switch__input', (event, node) => {
-    store.preferences.set(session.id, { [node.name]: node.checked });
-    toast.success('تم الحفظ', 'تم تحديث تفضيلاتك.');
-  });
-
-  delegate(content, 'click', '[data-reset]', async () => {
-    const ok = await confirmDialog({
-      title: 'إعادة ضبط البيانات التجريبية',
-      text: 'سيتم استعادة البيانات الأصلية وحذف كل ما أضفته أو عدّلته في هذه النسخة.',
-      confirmLabel: 'إعادة الضبط',
-    });
-    if (!ok) return;
-    store.resetDemoData();
-    toast.success('تمت إعادة الضبط', 'تمت استعادة البيانات التجريبية الأصلية.');
-    setTimeout(() => window.location.reload(), 600);
-  });
-
-  delegate(content, 'click', '[data-clear]', async () => {
-    const ok = await confirmDialog({
-      title: 'إفراغ السجلات',
-      text: 'سيتم حذف النازحين والأسر والمساعدات والمستندات والرسائل، مع الإبقاء على المخيمات والحسابات.',
-      confirmLabel: 'إفراغ السجلات',
-    });
-    if (!ok) return;
-    store.clearRecords();
-    toast.success('تم الإفراغ', 'أصبحت السجلات فارغة — يمكنك الآن مراجعة الحالات الفارغة.');
-    setTimeout(() => window.location.reload(), 600);
+  delegate(content, 'change', '.switch__input', async (event, node) => {
+    try {
+      await updateOwnPreferences({ [node.name]: node.checked });
+      toast.success('تم الحفظ', 'تم تحديث تفضيلاتك.');
+    } catch (error) {
+      console.error(error);
+      node.checked = !node.checked;
+      toast.error('تعذر الحفظ', 'حدث خطأ أثناء حفظ التفضيلات، حاول مرة أخرى.');
+    }
   });
 }

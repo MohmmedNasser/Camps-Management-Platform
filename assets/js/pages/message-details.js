@@ -2,7 +2,9 @@
  * One message thread.
  *
  * Opening an unread message marks it read for the administration. The reply
- * box only appears for roles allowed to reply.
+ * box only appears for roles allowed to reply. Fully real — replying notifies
+ * the sender server-side via the `messages_notify_on_change` trigger (Phase
+ * 4.19), since a browser has no INSERT permission on `notifications`.
  */
 
 import { esc, qs, params, delegate } from '../utils/dom.js';
@@ -27,8 +29,17 @@ import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
-import { ROLES } from '../core/config.js';
+import {
+  getMessage,
+  markMessageRead,
+  replyToMessage,
+  getCampMessages,
+  getAllMessages,
+  getOwnMessages,
+} from '../supabase/messages.js';
+import { getDisplacedPerson } from '../supabase/family-members.js';
+import { getCamp } from '../supabase/camps.js';
+import { ROLES, MESSAGE_SUBJECTS, labelOf } from '../core/config.js';
 import { rules } from '../utils/validators.js';
 
 const STATUS_VARIANTS = { unread: 'warning', read: 'neutral', replied: 'success' };
@@ -54,12 +65,6 @@ async function init({ session, content }) {
       return;
     }
 
-    // Reading an incoming message is what marks it read.
-    if (data.message.status === 'unread' && session.role !== ROLES.DISPLACED) {
-      store.messages.update(data.message.id, { status: 'read' });
-      data.message.status = 'read';
-    }
-
     content.innerHTML = view(session, data);
     wire(content, session, data);
   } catch (error) {
@@ -69,30 +74,30 @@ async function init({ session, content }) {
   }
 }
 
-function collect(session, id) {
-  const raw = store.messages.get(id);
-  if (!raw) return { message: null };
+async function collect(session, id) {
+  const message = await getMessage(id);
+  if (!message) return { message: null };
 
-  const visible =
-    session.role === ROLES.SUPER_ADMIN ||
-    (session.role === ROLES.CAMP_ADMIN && raw.campId === session.campId) ||
-    (session.role === ROLES.DISPLACED && raw.fromUserId === session.id);
-  if (!visible) return { message: null };
+  // Reading an incoming message is what marks it read.
+  if (message.status === 'unread' && session.role !== ROLES.DISPLACED) {
+    await markMessageRead(message.id);
+    message.status = 'read';
+  }
 
-  const message = select.messageRow(raw);
-  const sender = store.users.get(raw.fromUserId);
-  const person = sender && sender.displacedId ? store.displaced.get(sender.displacedId) : null;
+  const isOwn = session.role === ROLES.DISPLACED;
+  const scopeRows = isOwn
+    ? getOwnMessages()
+    : session.role === ROLES.SUPER_ADMIN
+      ? getAllMessages()
+      : getCampMessages(session.campId);
 
-  return {
-    message,
-    sender,
-    person,
-    history: select
-      .messagesFor(session)
-      .filter((row) => row.fromUserId === raw.fromUserId && row.id !== raw.id)
-      .slice(0, 5)
-      .map(select.messageRow),
-  };
+  const [camp, person, history] = await Promise.all([
+    getCamp(message.campId),
+    !isOwn && message.senderFamilyMemberId ? getDisplacedPerson(message.senderFamilyMemberId) : null,
+    scopeRows.then((rows) => rows.filter((row) => row.senderId === message.senderId && row.id !== message.id).slice(0, 5)),
+  ]);
+
+  return { message, camp, person, history };
 }
 
 function bubble({ author, initialsFor, time, body, tone = '' }) {
@@ -109,16 +114,18 @@ function bubble({ author, initialsFor, time, body, tone = '' }) {
     </div>`;
 }
 
-function view(session, { message, sender, person, history }) {
+function view(session, { message, camp, person, history }) {
   const isOwn = session.role === ROLES.DISPLACED;
+  const subjectLabel = labelOf(MESSAGE_SUBJECTS, message.subject);
+  const campLabel = camp ? camp.name : '—';
 
   return `
     ${breadcrumb([
       { label: 'الرسائل', href: pageUrl('messages.html') },
-      { label: message.subjectLabel },
+      { label: subjectLabel },
     ])}
     ${pageHeader({
-      title: message.subjectLabel,
+      title: subjectLabel,
       description: `${isOwn ? 'أرسلتها' : `من ${message.senderName}`} ${formatRelative(
         message.createdAt
       )} · ${formatDateTime(message.createdAt)}`,
@@ -193,7 +200,7 @@ function view(session, { message, sender, person, history }) {
                     (row) => `
                   <a class="list__row" href="${pageUrl('message-details.html', { id: row.id })}">
                     <span class="list__main">
-                      <span class="list__title">${esc(row.subjectLabel)}</span>
+                      <span class="list__title">${esc(labelOf(MESSAGE_SUBJECTS, row.subject))}</span>
                       <span class="list__meta">${esc(formatRelative(row.createdAt))}</span>
                     </span>
                     <span class="list__side">${badge(
@@ -214,16 +221,16 @@ function view(session, { message, sender, person, history }) {
           body: isOwn
             ? definitionList([
                 definition('الجهة', 'إدارة المخيم'),
-                definition('المخيم', message.campName),
+                definition('المخيم', campLabel),
                 definition('تاريخ الإرسال', formatDateTime(message.createdAt)),
               ])
             : definitionList([
                 definition('الاسم', message.senderName),
-                definition('البريد الإلكتروني', message.senderEmail),
-                definition('رقم الجوال', sender ? formatPhone(sender.phone) : '', { mono: true }),
+                definition('البريد الإلكتروني', person ? person.email : ''),
+                definition('رقم الجوال', person ? formatPhone(person.phone) : '', { mono: true }),
                 definition('رقم الهوية', person ? person.nationalId : '', { mono: true }),
-                definition('رقم الأسرة', person ? person.familyId : '', { mono: true }),
-                definition('المخيم', message.campName),
+                definition('رقم الأسرة', person ? person.familyLabel : '', { mono: true }),
+                definition('المخيم', campLabel),
               ]),
           foot:
             !isOwn && person
@@ -246,25 +253,15 @@ function wire(content, session, { message }) {
 
   bindForm(form, {
     schema: { reply: [rules.required('نص الرد'), rules.minLength(5, 'نص الرد')] },
-    onSubmit: (values) => {
-      store.messages.update(message.id, {
-        reply: values.reply.trim(),
-        repliedAt: new Date().toISOString(),
-        status: 'replied',
-      });
-
-      store.notifications.create({
-        userId: message.fromUserId,
-        type: 'info',
-        title: 'رد جديد من إدارة المخيم',
-        text: `تم الرد على رسالتك بخصوص "${message.subjectLabel}".`,
-        createdAt: new Date().toISOString(),
-        read: false,
-        href: `message-details.html?id=${message.id}`,
-      });
-
-      toast.success('تم الإرسال', 'تم إرسال الرد إلى مقدم الرسالة.');
-      init({ session, content });
+    onSubmit: async (values) => {
+      try {
+        await replyToMessage(message.id, values.reply.trim());
+        toast.success('تم الإرسال', 'تم إرسال الرد إلى مقدم الرسالة.');
+        init({ session, content });
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الإرسال', error.message || 'حدث خطأ غير متوقع، حاول مرة أخرى.');
+      }
     },
   });
 }

@@ -23,8 +23,6 @@ import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import { can } from '../core/auth.js';
-import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
 import { ROLES, AID_TYPES } from '../core/config.js';
 import { getAidDistribution, getSiblingDistributions, deleteAidDistribution } from '../supabase/aids.js';
 
@@ -36,7 +34,7 @@ async function init({ session, content }) {
   content.innerHTML = skeletonForm(6);
 
   try {
-    const data = await store.load(() => collect(session, id));
+    const data = await collect(session, id);
 
     if (!data.record) {
       content.innerHTML = emptyState({
@@ -57,53 +55,23 @@ async function init({ session, content }) {
   }
 }
 
-function collect(session, id) {
-  if (session.role === ROLES.CAMP_ADMIN) return collectReal(session, id);
-
-  const raw = store.aid.get(id);
-  if (!raw) return { record: null };
-
-  return {
-    record: select.aidRow(raw),
-    donor: store.organizations.get(raw.organizationId),
-    createdByName: (store.users.get(raw.createdBy) || {}).name || '—',
-    // Other distributions sharing at least one beneficiary family with this one.
-    siblings: dedupeById(
-      (raw.familyIds || []).flatMap((familyId) => select.searchAid({ familyId }))
-    )
-      .filter((row) => row.id !== raw.id)
-      .slice(0, 5),
-  };
-}
-
 /**
- * `record.campId !== session.campId` is redundant, UX-only narrowing — RLS
- * on `aid_distributions` (`aid_distributions_select_scoped`) already
- * prevents `getAidDistribution()` from returning another camp's row at all
- * (Phase 4.6 spec, same convention as `displaced-details.js`'s
- * `collectReal()`).
+ * `record.campId !== session.campId` is redundant, UX-only narrowing for a
+ * Camp Admin — RLS on `aid_distributions` (`aid_distributions_select_scoped`)
+ * already prevents `getAidDistribution()` from returning another camp's row
+ * at all (Phase 4.6 spec). A Super Admin has no single "own camp" to compare
+ * against — RLS's `is_super_admin()` branch is what legitimately lets them
+ * open any camp's record here (PAGE_ACCESS: aid-details.html is Super
+ * Admin/Camp Admin only).
  */
-async function collectReal(session, id) {
+async function collect(session, id) {
   const record = await getAidDistribution(id);
-  if (!record || record.campId !== session.campId) return { record: null };
+  if (!record) return { record: null };
+  if (session.role === ROLES.CAMP_ADMIN && record.campId !== session.campId) return { record: null };
 
   const siblings = await getSiblingDistributions(record.familyDbIds, record.id);
 
-  return {
-    record: { ...record, campName: session.campLabel },
-    donor: record.donor,
-    createdByName: record.createdByName,
-    siblings: siblings.map((row) => ({ ...row, campName: session.campLabel })),
-  };
-}
-
-function dedupeById(rows) {
-  const seen = new Set();
-  return rows.filter((row) => {
-    if (seen.has(row.id)) return false;
-    seen.add(row.id);
-    return true;
-  });
+  return { record, donor: record.donor, createdByName: record.createdByName, siblings };
 }
 
 function view(session, { record, donor, createdByName, siblings }) {
@@ -234,25 +202,20 @@ function wire(content, session, { record }) {
     });
     if (!ok) return;
 
-    if (session.role === ROLES.CAMP_ADMIN) {
-      try {
-        const deleted = await deleteAidDistribution(record.id);
-        if (!deleted) {
-          toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
-          return;
-        }
-        toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
-        go('aid.html');
-      } catch (error) {
-        console.error(error);
-        toast.error('تعذر الحذف', 'حدث خطأ أثناء الحذف، حاول مرة أخرى.');
+    // aid:delete is Camp-Admin-only (core/auth.js PERMISSIONS), so this
+    // control is never rendered for any other role in the first place.
+    try {
+      const deleted = await deleteAidDistribution(record.id);
+      if (!deleted) {
+        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
+        return;
       }
-      return;
+      toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
+      go('aid.html');
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الحذف', 'حدث خطأ أثناء الحذف، حاول مرة أخرى.');
     }
-
-    store.aid.remove(record.id);
-    toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
-    go('aid.html');
   });
 
   const beneficiarySearch = content.querySelector('#beneficiary-search');

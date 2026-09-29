@@ -13,7 +13,7 @@
 
 import { ageFrom } from '../utils/format.js';
 import { labelOf, GENDERS, TENT_TYPES, GOVERNORATES, WORK_STATUSES, INCOME_SOURCES } from './config.js';
-import { campName, personFacts } from './selectors.js';
+import { personFacts } from './selectors.js';
 
 const yesNo = (value) => (value ? 'نعم' : 'لا');
 
@@ -54,7 +54,7 @@ export function displacedExportRow(person) {
     gender: labelOf(GENDERS, person.gender),
     age: age === null ? '' : age,
     phone: person.phone,
-    campName: person.campName || campName(person.campId),
+    campName: person.campName,
     originCity: person.originCity || labelOf(GOVERNORATES, person.originGovernorate, ''),
     displacementDate: person.displacementDate,
     tentType: labelOf(TENT_TYPES, person.tentType),

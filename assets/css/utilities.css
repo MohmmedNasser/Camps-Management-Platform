@@ -58,6 +58,14 @@
 .u-mb-6 { margin-bottom: var(--space-6); }
 .u-mb-7 { margin-bottom: var(--space-7); }
 
+.u-p-1 { padding: var(--space-1); }
+.u-p-2 { padding: var(--space-2); }
+.u-p-3 { padding: var(--space-3); }
+.u-p-4 { padding: var(--space-4); }
+.u-p-5 { padding: var(--space-5); }
+.u-p-6 { padding: var(--space-6); }
+.u-p-7 { padding: var(--space-7); }
+
 .u-full { width: 100%; }
 .u-nowrap { white-space: nowrap; }
 .u-ltr { direction: ltr; unicode-bidi: embed; }

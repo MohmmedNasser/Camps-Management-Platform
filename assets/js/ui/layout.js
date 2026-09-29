@@ -15,13 +15,14 @@ import { avatar } from './components.js';
 import { confirmDialog } from './modal.js';
 import { guard, pageUrl, currentPage, go } from '../core/router.js';
 import { logout } from '../core/auth.js';
-import { unreadMessageCount, pendingRequestCount } from '../core/selectors.js';
 import {
   listNotifications,
   unreadNotificationCount,
   markAllNotificationsRead,
   mapNotificationRow,
 } from '../supabase/notifications.js';
+import { getUnreadMessageCount } from '../supabase/messages.js';
+import { getPendingRequestCount } from '../supabase/registration-requests.js';
 import { APP_SHORT, NAVIGATION, ROLE_LABELS, ROLES } from '../core/config.js';
 
 const NOTIF_ICONS = { success: 'checkCircle', warning: 'alertTriangle', error: 'alertCircle', info: 'info' };
@@ -299,6 +300,34 @@ async function resolveNotifications() {
   }
 }
 
+/** Real unread-message count for the sidebar badge — Camp Admin/Super Admin
+ *  only; a displaced person's own sent messages are never "unread" from
+ *  their own point of view (same rule the old mock unreadMessageCount()
+ *  encoded). RLS (messages_select_scoped) scopes the count to the caller's
+ *  own camp, or every camp for a Super Admin, on its own. */
+async function unreadMessageCountFor(session) {
+  if (session.role === ROLES.DISPLACED) return 0;
+  try {
+    return await getUnreadMessageCount();
+  } catch (error) {
+    console.error(error);
+    return 0;
+  }
+}
+
+/** Real pending-request count for the sidebar badge — Camp Admin only (the
+ *  only role whose nav has this item). RLS (registration_requests_select_
+ *  scoped) is the actual scoping boundary. */
+async function pendingRequestCountFor(session) {
+  if (session.role !== ROLES.CAMP_ADMIN) return 0;
+  try {
+    return await getPendingRequestCount(session.campId);
+  } catch (error) {
+    console.error(error);
+    return 0;
+  }
+}
+
 /* ---- Public API ---------------------------------------------------------- */
 
 /**
@@ -310,11 +339,16 @@ export async function mountShell({ active = currentPage(), title = '' } = {}) {
   const session = await guard();
   if (!session) return null;
 
+  const [{ notifications, unread }, unreadMessages, pendingRequests] = await Promise.all([
+    resolveNotifications(),
+    unreadMessageCountFor(session),
+    pendingRequestCountFor(session),
+  ]);
+
   const badges = {
-    pendingRequests: pendingRequestCount(session),
-    unreadMessages: unreadMessageCount(session),
+    pendingRequests,
+    unreadMessages,
   };
-  const { notifications, unread } = await resolveNotifications();
 
   document.body.classList.remove('app-loading');
   document.body.innerHTML = shellMarkup(session, active, badges, notifications, unread);

@@ -35,8 +35,9 @@ import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
-import { getCampFamilies, deleteFamily } from '../supabase/families.js';
+import { matchesFamilyFilters } from '../core/selectors.js';
+import { getCampFamilies, getAllFamilies, deleteFamily } from '../supabase/families.js';
+import { listCampOptions } from '../supabase/camps.js';
 import { FAMILY_COLUMNS, familyExportRow } from '../core/exports.js';
 import { exportSheet, timestampedName } from '../utils/xlsx.js';
 import { ROLES, PAGE_SIZE, FAMILY_SIZES, YES_NO } from '../core/config.js';
@@ -62,8 +63,12 @@ FILTER_KEYS.forEach((key) => {
   state[key] = '';
 });
 
+/** Fetched once in init() — filterSpec() reads it back synchronously, same
+ *  convention as displaced.js's campOptionsCache. */
+let campOptionsCache = [];
+
 const shell = await mountShell({ active: 'families.html', title: 'الأسر' });
-if (shell) init(shell);
+if (shell) await init(shell);
 
 function readQuery() {
   const query = params();
@@ -98,7 +103,7 @@ function filterSpec(session) {
       name: 'campId',
       label: 'المخيم',
       group: 'بيانات الأسرة',
-      options: select.campOptions(session),
+      options: campOptionsCache,
       value: state.campId,
     },
     {
@@ -171,9 +176,14 @@ function filterSpec(session) {
 
 /* ---- Entry --------------------------------------------------------------- */
 
-function init({ session, content }) {
+async function init({ session, content }) {
   readQuery();
+  content.innerHTML = skeletonTable(6);
+
   const isSuper = session.role === ROLES.SUPER_ADMIN;
+  // select.campOptions() reads the mock store and never matches a real camp
+  // id (same trap Phase 4.6's aid-create.js flagged).
+  campOptionsCache = isSuper ? await listCampOptions() : [];
   const filters = filterSpec(session);
 
   content.innerHTML = `
@@ -221,10 +231,9 @@ function init({ session, content }) {
     // Fresh descriptors every time the sheet opens, so it always reflects the
     // filters most recently applied rather than a stale snapshot from render.
     getFilters: () => filterSpec(session),
-    // Live count for the values staged inside the sheet, through the exact
-    // same query the table and export use.
-    onPreview: (staged) =>
-      select.getFilteredFamilies(session, { query: state.q, ...staged }).length,
+    // Live count for the values staged inside the sheet, read through the
+    // exact same query the table and export use — nothing bespoke here.
+    onPreview: (staged) => collect(session, { query: state.q, ...staged }).then((rows) => rows.length),
   });
 
   delegate(content, 'click', '[data-page]', (event, node) => {
@@ -252,29 +261,23 @@ function init({ session, content }) {
     load(session);
   });
 
+  // family:delete is Camp-Admin-only (core/auth.js PERMISSIONS), so this
+  // control is never rendered for any other role in the first place.
   delegate(content, 'click', '[data-delete]', async (event, node) => {
     const id = node.dataset.delete;
-    const isCampAdmin = session.role === ROLES.CAMP_ADMIN;
     const ok = await confirmDialog({
       title: 'حذف الأسرة',
-      text: isCampAdmin
-        ? `سيتم حذف الأسرة ${id} وجميع أفرادها وسجل مساعداتها. لا يمكن التراجع عن هذا الإجراء.`
-        : `سيتم حذف الأسرة ${id} وسجل مساعداتها. يبقى أفرادها مسجلين كنازحين دون أسرة.`,
+      text: `سيتم حذف الأسرة ${id} وجميع أفرادها وسجل مساعداتها. لا يمكن التراجع عن هذا الإجراء.`,
       confirmLabel: 'حذف الأسرة',
     });
     if (!ok) return;
 
-    if (isCampAdmin) {
-      const deleted = await deleteFamily(id);
-      if (!deleted) {
-        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذه الأسرة.');
-        return;
-      }
-      toast.success('تم الحذف', 'تم حذف الأسرة وأفرادها.');
-    } else {
-      select.removeFamily(id);
-      toast.success('تم الحذف', 'تم حذف الأسرة وفك ارتباط أفرادها.');
+    const deleted = await deleteFamily(id);
+    if (!deleted) {
+      toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذه الأسرة.');
+      return;
     }
+    toast.success('تم الحذف', 'تم حذف الأسرة وأفرادها.');
     load(session);
   });
 
@@ -299,13 +302,15 @@ function init({ session, content }) {
 
 /* ---- Data + rendering ----------------------------------------------------- */
 
-/** The single query behind the table, the count and the export. */
-async function collect(session) {
-  if (session.role !== ROLES.CAMP_ADMIN) {
-    return select.getFilteredFamilies(session, { query: state.q, ...filterValues() });
-  }
-  const rows = await getCampFamilies(session.campId);
-  return rows.filter((family) => select.matchesFamilyFilters(family, { query: state.q, ...filterValues() }));
+/**
+ * The single query behind the table, the count and the export. `filters`
+ * defaults to the currently-applied state, but the filter sheet's live
+ * preview passes the still-staged (not yet applied) values explicitly.
+ */
+async function collect(session, filters = { query: state.q, ...filterValues() }) {
+  const isSuper = session.role === ROLES.SUPER_ADMIN;
+  const rows = isSuper ? await getAllFamilies() : await getCampFamilies(session.campId);
+  return rows.filter((family) => matchesFamilyFilters(family, filters));
 }
 
 async function load(session) {

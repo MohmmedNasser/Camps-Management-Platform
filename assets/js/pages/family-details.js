@@ -29,7 +29,7 @@ import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import { can, getSession } from '../core/auth.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import { isOrphan } from '../core/selectors.js';
 import { ROLES, labelOf, GENDERS, RELATIONSHIPS, TENT_TYPES, DOCUMENT_CATEGORIES } from '../core/config.js';
 import { getFamilyByReferenceCode, deleteFamily, getOwnFamily } from '../supabase/families.js';
 import { getFamilyAidHistory } from '../supabase/aids.js';
@@ -73,25 +73,11 @@ async function init({ session, content }) {
 function collect(session) {
   const { id } = params();
 
-  if (session.role === ROLES.CAMP_ADMIN) {
-    return collectReal(session, id);
-  }
-
   if (session.role === ROLES.DISPLACED) {
     return collectOwn(session);
   }
 
-  // Super Admin — unchanged mock path (out of Phase 4.13 scope).
-  if (!id) return { family: null };
-
-  const family = select.familyWithStats(id);
-  if (!family) return { family: null };
-
-  return {
-    family,
-    aid: select.aidForFamily(id),
-    documents: store.documents.list((row) => row.familyId === id).map(select.documentRow),
-  };
+  return collectReal(session, id);
 }
 
 /**
@@ -118,14 +104,19 @@ async function collectOwn(session) {
   };
 }
 
+/**
+ * `family.campId !== session.campId` is redundant, UX-only narrowing for a
+ * Camp Admin — RLS on `families` already prevents `getFamilyByReferenceCode()`
+ * from returning another camp's row at all (Phase 4.4 spec §5.2). A Super
+ * Admin has no single "own camp" to compare against — RLS's `is_super_admin()`
+ * branch is what legitimately lets them open any camp's family here
+ * (PAGE_ACCESS: family-details.html is Super Admin/Camp Admin/Displaced).
+ */
 async function collectReal(session, referenceCode) {
   if (!referenceCode) return { family: null };
   const family = await getFamilyByReferenceCode(referenceCode);
-  // Redundant, UX-only narrowing — RLS on `families` already prevents
-  // getFamilyByReferenceCode from returning another camp's row at all
-  // (Phase 4.4 spec §5.2). This only picks the not-found copy for a
-  // same-camp typo; it is not, and is not needed as, a security check.
-  if (!family || family.campId !== session.campId) return { family: null };
+  if (!family) return { family: null };
+  if (session.role === ROLES.CAMP_ADMIN && family.campId !== session.campId) return { family: null };
 
   const [aidRows, docsResult] = await Promise.all([
     getFamilyAidHistory(family._dbId),
@@ -133,7 +124,7 @@ async function collectReal(session, referenceCode) {
   ]);
 
   return {
-    family: { ...family, campName: session.campLabel },
+    family,
     aid: aidRows.map(mapAidHistoryRow),
     documents: docsResult.rows.map(mapDocumentRow),
   };
@@ -336,7 +327,7 @@ function membersTable(family) {
           [
             row.chronicDiseases ? badge('مرض مزمن', 'warning') : '',
             row.disability ? badge('إعاقة', 'error') : '',
-            select.isOrphan(row) ? badge('يتيم', 'info') : '',
+            isOrphan(row) ? badge('يتيم', 'info') : '',
           ]
             .filter(Boolean)
             .join(' ') || '<span class="u-muted">—</span>',
@@ -511,25 +502,20 @@ async function openActivationModal(family) {
 function wire(content, session, { family }) {
   delegate(content, 'click', '[data-activate]', () => openActivationModal(family));
 
+  // family:delete is Camp-Admin-only (core/auth.js PERMISSIONS), so this
+  // control is never rendered for any other role in the first place.
   delegate(content, 'click', '[data-delete]', async () => {
-    const isCampAdmin = session.role === ROLES.CAMP_ADMIN;
     const ok = await confirmDialog({
       title: 'حذف الأسرة',
-      text: isCampAdmin
-        ? `سيتم حذف الأسرة ${family.id} وجميع أفرادها وسجل مساعداتها. لا يمكن التراجع عن هذا الإجراء.`
-        : `سيتم حذف الأسرة ${family.id} وسجل مساعداتها. يبقى أفرادها مسجلين كنازحين دون أسرة.`,
+      text: `سيتم حذف الأسرة ${family.id} وجميع أفرادها وسجل مساعداتها. لا يمكن التراجع عن هذا الإجراء.`,
       confirmLabel: 'حذف الأسرة',
     });
     if (!ok) return;
 
-    if (isCampAdmin) {
-      const deleted = await deleteFamily(family.id);
-      if (!deleted) {
-        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذه الأسرة.');
-        return;
-      }
-    } else {
-      select.removeFamily(family.id);
+    const deleted = await deleteFamily(family.id);
+    if (!deleted) {
+      toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذه الأسرة.');
+      return;
     }
     toast.success('تم الحذف', 'تم حذف الأسرة.');
     go('families.html');

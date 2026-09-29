@@ -98,6 +98,43 @@ export async function findOwnCampDuplicate(nationalId, campId) {
   );
 }
 
+/**
+ * The current user's own registration request — what pending.html shows
+ * while a self-registered account waits for a Camp Admin's decision. RLS
+ * (`registration_requests_select_scoped`) already restricts this to the
+ * caller's own row (`user_id = auth.uid()`), so no id/scoping argument is
+ * needed; ordered by `created_at desc` in case more than one ever exists,
+ * though the applicant can only ever create one for itself.
+ */
+export async function getOwnRegistrationRequest() {
+  const client = requireClient();
+  const userId = await currentUserId();
+  if (!userId) return null;
+  const rows = await run(
+    client
+      .from('registration_requests')
+      .select(REQUEST_SELECT)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+  );
+  return rows.length ? mapRequestRow(rows[0]) : null;
+}
+
+/** The sidebar's "طلبات التسجيل" badge — Camp Admin only (the only role with
+ *  that nav item). RLS (registration_requests_select_scoped) is the actual
+ *  scoping boundary; campId matches the getCampX() convention elsewhere. */
+export async function getPendingRequestCount(campId) {
+  const client = requireClient();
+  const { count, error } = await client
+    .from('registration_requests')
+    .select('id', { count: 'exact' })
+    .eq('camp_id', campId)
+    .eq('status', 'pending');
+  if (error) throw mapError(error);
+  return count || 0;
+}
+
 export async function createRegistrationRequest({ fullName, nationalId, phone, email, campId, note = '' }) {
   const client = requireClient();
   const userId = await currentUserId();

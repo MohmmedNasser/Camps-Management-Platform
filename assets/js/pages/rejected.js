@@ -9,8 +9,8 @@ import { statusLayout } from '../ui/auth-layout.js';
 import { button, statusBadge, alert, definitionList, definition } from '../ui/components.js';
 import { getSession, logout, ProfileError } from '../core/auth.js';
 import { homeFor } from '../core/router.js';
-import { campName } from '../core/selectors.js';
-import * as store from '../core/store.js';
+import { getOwnRegistrationRequest } from '../supabase/registration-requests.js';
+import { getCamp } from '../supabase/camps.js';
 import { STATUS } from '../core/config.js';
 
 ready(async () => {
@@ -34,14 +34,12 @@ ready(async () => {
     return;
   }
 
-  render(session);
+  const request = await getOwnRegistrationRequest();
+  const camp = request?.campId ? await getCamp(request.campId) : null;
+  render(session, { request, campLabel: camp ? camp.name : '—' });
 });
 
-function render(session) {
-  const request =
-    (session.requestId && store.registrationRequests.get(session.requestId)) ||
-    store.registrationRequests.find((row) => row.email === session.email);
-
+function render(session, { request, campLabel }) {
   const reason = (request && request.note) || 'لم يتم تسجيل سبب محدد. يرجى مراجعة إدارة المخيم.';
 
   document.body.classList.remove('app-loading');
@@ -58,8 +56,8 @@ function render(session) {
           <div class="card__body">
             ${definitionList([
               definition('الاسم', session.name),
-              definition('المخيم', campName(session.campId)),
-              definition('تاريخ الطلب', formatDate(request ? request.createdAt : session.createdAt)),
+              definition('المخيم', campLabel),
+              definition('تاريخ الطلب', formatDate(request ? request.createdAt : null)),
               definition('تاريخ المراجعة', request && request.reviewedAt ? formatDate(request.reviewedAt) : '—'),
             ])}
           </div>

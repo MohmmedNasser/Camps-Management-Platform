@@ -78,6 +78,64 @@ export async function getCampFamilies(campId) {
 }
 
 /**
+ * Every family platform-wide — the real Super Admin list. RLS
+ * (`is_super_admin()` branch on the tables `family_stats`/
+ * `aid_distribution_families` sit behind) is what removes the camp
+ * boundary; the only addition over `getCampFamilies()` is the camp name
+ * embed, since a Super Admin's table shows a "المخيم" column the Camp
+ * Admin one doesn't need.
+ */
+export async function getAllFamilies() {
+  const client = requireClient();
+  const families = await run(
+    client
+      .from('families')
+      .select(
+        'id, reference_code, camp_id, notes, created_at, ' +
+          'camp:camps!families_camp_id_fkey(name), ' +
+          'head:family_members!families_head_member_id_fkey(full_name, tent_type)'
+      )
+  );
+  if (!families.length) return [];
+
+  const ids = families.map((f) => f.id);
+  const [stats, aidLinks] = await Promise.all([
+    run(client.from('family_stats').select('*').in('family_id', ids)),
+    run(client.from('aid_distribution_families').select('family_id').in('family_id', ids)),
+  ]);
+
+  const statsByFamily = new Map(stats.map((s) => [s.family_id, s]));
+  const aidCountByFamily = new Map();
+  aidLinks.forEach((row) =>
+    aidCountByFamily.set(row.family_id, (aidCountByFamily.get(row.family_id) || 0) + 1)
+  );
+
+  return families.map((family) => {
+    const s = statsByFamily.get(family.id) || {};
+    return {
+      id: family.reference_code,
+      campId: family.camp_id,
+      campName: family.camp?.name || '—',
+      headName: family.head?.full_name || '—',
+      headTentType: family.head?.tent_type || '',
+      notes: family.notes || '',
+      membersCount: Number(s.members_count) || 0,
+      childrenUnder18: Number(s.children_under_18) || 0,
+      childrenUnder3: Number(s.children_under_3) || 0,
+      childrenUnder2: Number(s.children_under_2) || 0,
+      childrenUnder1: Number(s.children_under_1) || 0,
+      orphans: Number(s.orphans) || 0,
+      chronic: Number(s.chronic) || 0,
+      disability: Number(s.disability) || 0,
+      pregnant: Number(s.pregnant) || 0,
+      breastfeeding: Number(s.breastfeeding) || 0,
+      aidCount: aidCountByFamily.get(family.id) || 0,
+      createdAt: family.created_at,
+    };
+  });
+}
+
+/**
  * `filters.search` matches `reference_code` by prefix (`FAM-000001` shape),
  * matching the pattern_ops index rather than a full scan.
  */
@@ -136,6 +194,7 @@ export async function getFamilyByReferenceCode(referenceCode) {
       .from('families')
       .select(
         'id, reference_code, camp_id, notes, created_at, ' +
+          'camp:camps!families_camp_id_fkey(name), ' +
           'head:family_members!families_head_member_id_fkey(full_name, tent_type), ' +
           'family_members!family_members_family_id_fkey(*)'
       )
@@ -156,6 +215,7 @@ export async function getFamilyByReferenceCode(referenceCode) {
     id: family.reference_code,
     _dbId: family.id,
     campId: family.camp_id,
+    campName: family.camp?.name || '—',
     notes: family.notes || '',
     createdAt: family.created_at,
     headName: family.head?.full_name || '—',
@@ -243,6 +303,27 @@ export async function getCampFamilyOptions(campId) {
       .from('families')
       .select('id, reference_code, head:family_members!families_head_member_id_fkey(full_name)')
       .eq('camp_id', campId)
+  );
+  return rows
+    .map((family) => ({
+      value: family.id,
+      referenceCode: family.reference_code,
+      label: `${family.reference_code} — ${family.head?.full_name || 'بدون رب أسرة'}`,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
+}
+
+/**
+ * `{value, label, referenceCode}` options platform-wide — the Super Admin
+ * equivalent of `getCampFamilyOptions()`, same shape, no camp filter. RLS
+ * (`is_super_admin()`) is what removes the camp boundary.
+ */
+export async function getAllFamilyOptions() {
+  const client = requireClient();
+  const rows = await run(
+    client
+      .from('families')
+      .select('id, reference_code, head:family_members!families_head_member_id_fkey(full_name)')
   );
   return rows
     .map((family) => ({

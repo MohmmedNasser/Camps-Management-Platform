@@ -27,15 +27,18 @@ import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import { matchesAidFilters } from '../core/selectors.js';
 import { ROLES, AID_TYPES, PAGE_SIZE } from '../core/config.js';
 import { AID_COLUMNS, aidExportRow } from '../core/exports.js';
 import { exportSheet, timestampedName } from '../utils/xlsx.js';
-import { getCampAidDistributions, deleteAidDistribution, getFamilyAidDistributions } from '../supabase/aids.js';
-import { getCampFamilyOptions, getOwnFamily } from '../supabase/families.js';
+import {
+  getCampAidDistributions,
+  getAllAidDistributions,
+  deleteAidDistribution,
+  getFamilyAidDistributions,
+} from '../supabase/aids.js';
+import { getCampFamilyOptions, getAllFamilyOptions, getOwnFamily } from '../supabase/families.js';
 import { listOrganizationOptions } from '../supabase/organizations.js';
-
-const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
 
 // Populated once, before the first render, for a real Camp Admin session —
 // select.organizationOptions()/select.familyOptions() read the mock store
@@ -45,11 +48,16 @@ const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
 // fetched once here rather than inline in filterSpec().
 const campAdminOptions = { organizations: [], families: [] };
 
+// Same reasoning, for a real Super Admin session (platform-wide options).
+const superAdminOptions = { organizations: [], families: [] };
+
 // Populated once, before the first render, for a real displaced session —
 // same reasoning as campAdminOptions above: filterSpec() must stay
 // synchronous, so the real organization list is fetched once here.
 let ownOrganizations = [];
 let ownFamily = null;
+
+const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
 
 const shell = await mountShell({ active: 'aid.html', title: 'المساعدات' });
 if (shell) init(shell);
@@ -81,7 +89,11 @@ function filterSpec(session) {
     {
       name: 'organizationId',
       label: 'الجهة المانحة',
-      options: isCampAdmin ? campAdminOptions.organizations : isOwn ? ownOrganizations : select.organizationOptions(),
+      options: isCampAdmin
+        ? campAdminOptions.organizations
+        : isOwn
+          ? ownOrganizations
+          : superAdminOptions.organizations,
       value: state.organizationId,
     },
     ...(isOwn
@@ -90,7 +102,7 @@ function filterSpec(session) {
           {
             name: 'familyId',
             label: 'الأسرة',
-            options: isCampAdmin ? campAdminOptions.families : select.familyOptions(''),
+            options: isCampAdmin ? campAdminOptions.families : superAdminOptions.families,
             value: state.familyId,
           },
         ]),
@@ -107,6 +119,11 @@ async function init({ session, content }) {
     ]);
     campAdminOptions.organizations = organizations;
     campAdminOptions.families = families;
+  } else if (session.role === ROLES.SUPER_ADMIN) {
+    content.innerHTML = skeletonTable(6);
+    const [organizations, families] = await Promise.all([listOrganizationOptions(), getAllFamilyOptions()]);
+    superAdminOptions.organizations = organizations;
+    superAdminOptions.families = families;
   } else if (session.role === ROLES.DISPLACED) {
     content.innerHTML = skeletonTable(6);
     const [organizations, family] = await Promise.all([listOrganizationOptions(), getOwnFamily(session)]);
@@ -197,25 +214,20 @@ function renderPage(session, content) {
     });
     if (!ok) return;
 
-    if (session.role === ROLES.CAMP_ADMIN) {
-      try {
-        const deleted = await deleteAidDistribution(node.dataset.delete);
-        if (!deleted) {
-          toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
-          return;
-        }
-        toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
-        load(session);
-      } catch (error) {
-        console.error(error);
-        toast.error('تعذر الحذف', 'حدث خطأ أثناء الحذف، حاول مرة أخرى.');
+    // aid:delete is Camp-Admin-only (core/auth.js PERMISSIONS), so this
+    // control is never rendered for any other role in the first place.
+    try {
+      const deleted = await deleteAidDistribution(node.dataset.delete);
+      if (!deleted) {
+        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
+        return;
       }
-      return;
+      toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
+      load(session);
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الحذف', 'حدث خطأ أثناء الحذف، حاول مرة أخرى.');
     }
-
-    store.aid.remove(node.dataset.delete);
-    toast.success('تم الحذف', 'تم حذف سجل المساعدة.');
-    load(session);
   });
 
   delegate(content, 'click', '[data-clear-search]', () => {
@@ -248,42 +260,40 @@ async function load(session) {
   }
 }
 
-/**
- * Super Admin and displaced sessions read the mock store, scoped by
- * `scopeFilter`; a Camp Admin reads real, RLS-scoped Supabase data and
- * filters it with the equivalent, independent `matchesAidFilters()`
- * (Phase 4.6, same split Phase 4.4/4.5 used for families/displaced).
- */
+/** Fully real for all three roles — RLS scopes each read on its own
+ *  (own camp for Camp Admin, own family for Displaced, everything for
+ *  Super Admin); matchesAidFilters() applies the same client-side filter
+ *  set to whichever rows come back. */
 async function collect(session) {
   if (session.role === ROLES.CAMP_ADMIN) {
     const rows = await getCampAidDistributions(session.campId);
-    return rows
-      .map((row) => ({ ...row, campName: session.campLabel }))
-      .filter((row) =>
-        select.matchesAidFilters(row, {
-          query: state.q,
-          type: state.type,
-          organizationId: state.organizationId,
-          familyId: state.familyId,
-        })
-      );
+    return rows.filter((row) =>
+      matchesAidFilters(row, {
+        query: state.q,
+        type: state.type,
+        organizationId: state.organizationId,
+        familyId: state.familyId,
+      })
+    );
   }
 
   if (session.role === ROLES.DISPLACED) {
     if (!ownFamily) return [];
     const rows = await getFamilyAidDistributions(ownFamily._dbId);
-    return rows
-      .map((row) => ({ ...row, campName: session.campLabel }))
-      .filter((row) => select.matchesAidFilters(row, { query: state.q, type: state.type, organizationId: state.organizationId }));
+    return rows.filter((row) =>
+      matchesAidFilters(row, { query: state.q, type: state.type, organizationId: state.organizationId })
+    );
   }
 
-  return select.searchAid({
-    query: state.q,
-    type: state.type,
-    organizationId: state.organizationId,
-    familyId: state.familyId,
-    scope: select.scopeFilter(session),
-  });
+  const rows = await getAllAidDistributions();
+  return rows.filter((row) =>
+    matchesAidFilters(row, {
+      query: state.q,
+      type: state.type,
+      organizationId: state.organizationId,
+      familyId: state.familyId,
+    })
+  );
 }
 
 /* ---- Excel export --------------------------------------------------------- */

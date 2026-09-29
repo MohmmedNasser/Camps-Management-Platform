@@ -3,7 +3,9 @@
  *
  * Sending is a displaced-person action (`message:send`); administrators reply
  * from a message rather than starting a thread, so they see a pointer instead
- * of a form.
+ * of a form. Fully real — the camp's admin(s) are notified server-side by the
+ * `messages_notify_on_change` trigger (Phase 4.19), since a displaced user's
+ * browser has no INSERT permission on `notifications`.
  */
 
 import { qs, params } from '../utils/dom.js';
@@ -14,8 +16,7 @@ import { messageFields, messageSchema } from '../ui/record-forms.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import { can } from '../core/auth.js';
-import * as store from '../core/store.js';
-import { ROLES } from '../core/config.js';
+import { createMessage } from '../supabase/messages.js';
 
 const shell = await mountShell({ active: 'messages.html', title: 'رسالة جديدة' });
 if (shell) init(shell);
@@ -68,35 +69,19 @@ function init({ session, content }) {
 
   bindForm(form, {
     schema: messageSchema(),
-    onSubmit: (values) => {
-      const message = store.messages.create({
-        fromUserId: session.id,
-        toRole: ROLES.CAMP_ADMIN,
-        campId: session.campId,
-        subject: values.subject,
-        body: values.body.trim(),
-        status: 'unread',
-        createdAt: new Date().toISOString(),
-        reply: '',
-      });
-
-      // Every admin of this camp is told a message is waiting.
-      store.users
-        .list((user) => user.role === ROLES.CAMP_ADMIN && user.campId === session.campId)
-        .forEach((admin) =>
-          store.notifications.create({
-            userId: admin.id,
-            type: 'info',
-            title: 'رسالة جديدة من نازح',
-            text: `${session.name} أرسل رسالة جديدة.`,
-            createdAt: new Date().toISOString(),
-            read: false,
-            href: `message-details.html?id=${message.id}`,
-          })
-        );
-
-      toast.success('تم الإرسال', 'وصلت رسالتك إلى إدارة المخيم.');
-      go('message-details.html', { id: message.id });
+    onSubmit: async (values) => {
+      try {
+        const message = await createMessage({
+          campId: session.campId,
+          subject: values.subject,
+          body: values.body.trim(),
+        });
+        toast.success('تم الإرسال', 'وصلت رسالتك إلى إدارة المخيم.');
+        go('message-details.html', { id: message.id });
+      } catch (error) {
+        console.error(error);
+        toast.error('تعذر الإرسال', error.message || 'حدث خطأ غير متوقع، حاول مرة أخرى.');
+      }
     },
   });
 }

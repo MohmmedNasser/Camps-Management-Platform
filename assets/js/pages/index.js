@@ -7,9 +7,6 @@
 
 import { getSession, ProfileError } from '../core/auth.js';
 import { homeFor } from '../core/router.js';
-import { validateData } from '../core/store.js';
-
-validateData();
 
 try {
   const session = await getSession();

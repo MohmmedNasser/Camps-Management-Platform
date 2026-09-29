@@ -2,8 +2,10 @@
  * Messages.
  *
  * A displaced person writes to the camp administration and reads the replies;
- * an administrator reads the camp's inbox and replies. Sending a new message
- * is a displaced-only action (`message:send`), replying an admin one.
+ * an administrator reads the camp's inbox (or, for the Super Admin, every
+ * camp's) and replies. Sending a new message is a displaced-only action
+ * (`message:send`), replying an admin one. Fully real (no mock branch) — RLS
+ * (`messages_select_scoped`) already scopes every role correctly on its own.
  */
 
 import { esc, qs, delegate, params, setParams } from '../utils/dom.js';
@@ -24,8 +26,9 @@ import { icon } from '../ui/icons.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
-import { ROLES, MESSAGE_SUBJECTS } from '../core/config.js';
+import { matchesMessageFilters } from '../core/selectors.js';
+import { getCampMessages, getAllMessages, getOwnMessages } from '../supabase/messages.js';
+import { ROLES, MESSAGE_SUBJECTS, labelOf } from '../core/config.js';
 
 const STATUS_VARIANTS = { unread: 'warning', read: 'neutral', replied: 'success' };
 const STATUS_LABELS = { unread: 'غير مقروءة', read: 'مقروءة', replied: 'تم الرد' };
@@ -53,7 +56,9 @@ function init({ session, content }) {
       title: isOwn ? 'رسائلي' : 'الرسائل الواردة',
       description: isOwn
         ? 'رسائلك إلى إدارة المخيم وردودها عليك.'
-        : `الرسائل الواردة من نازحي ${session.campLabel}.`,
+        : session.role === ROLES.SUPER_ADMIN
+          ? 'الرسائل الواردة من نازحي جميع المخيمات.'
+          : `الرسائل الواردة من نازحي ${session.campLabel}.`,
       actions: can('message:send')
         ? button({
             label: 'رسالة جديدة',
@@ -100,16 +105,34 @@ function init({ session, content }) {
   load(session);
 }
 
+/* ---- Data ------------------------------------------------------------- */
+
+function fetchAll(session) {
+  if (session.role === ROLES.DISPLACED) return getOwnMessages();
+  if (session.role === ROLES.SUPER_ADMIN) return getAllMessages();
+  return getCampMessages(session.campId);
+}
+
+function countsByStatus(rows) {
+  return {
+    all: rows.length,
+    unread: rows.filter((row) => row.status === 'unread').length,
+    read: rows.filter((row) => row.status === 'read').length,
+    replied: rows.filter((row) => row.status === 'replied').length,
+  };
+}
+
 async function load(session) {
   const target = qs('#results');
   if (!target) return;
   target.innerHTML = skeletonTable(5);
 
   try {
-    const [rows, counts] = await store.load(() => [
-      select.searchMessages(session, { query: state.q, status: state.status, subject: state.subject }),
-      select.messageCountsByStatus(session),
-    ]);
+    const allRows = await store.load(() => fetchAll(session));
+    const counts = countsByStatus(allRows);
+    const rows = allRows.filter((row) =>
+      matchesMessageFilters(row, { query: state.q, status: state.status, subject: state.subject })
+    );
 
     const chips = qs('#chips');
     if (chips) {
@@ -132,6 +155,8 @@ async function load(session) {
   }
 }
 
+/* ---- Rendering ---------------------------------------------------------- */
+
 function listView(session, rows) {
   const isOwn = session.role === ROLES.DISPLACED;
 
@@ -145,7 +170,7 @@ function listView(session, rows) {
           ${avatar(isOwn ? 'إدارة المخيم' : message.senderName, { size: 'sm' })}
           <span class="list__main">
             <span class="list__title">
-              ${esc(message.subjectLabel)}
+              ${esc(labelOf(MESSAGE_SUBJECTS, message.subject))}
               ${message.status === 'unread' && !isOwn ? badge('جديدة', 'warning') : ''}
             </span>
             <span class="list__meta">${esc(

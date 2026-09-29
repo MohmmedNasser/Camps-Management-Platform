@@ -9,7 +9,8 @@ import { statusLayout } from '../ui/auth-layout.js';
 import { button, statusBadge, definitionList, definition } from '../ui/components.js';
 import { getSession, logout, ProfileError } from '../core/auth.js';
 import { homeFor } from '../core/router.js';
-import { campName } from '../core/selectors.js';
+import { getOwnRegistrationRequest } from '../supabase/registration-requests.js';
+import { getCamp } from '../supabase/camps.js';
 import { STATUS } from '../core/config.js';
 
 ready(async () => {
@@ -33,15 +34,18 @@ ready(async () => {
     return;
   }
 
-  render(session);
+  const request = await getOwnRegistrationRequest();
+  const camp = request?.campId ? await getCamp(request.campId) : null;
+
+  render(session, { campLabel: camp ? camp.name : '—', createdAt: request?.createdAt });
 });
 
-function render(session) {
+function render(session, request) {
   const details = definitionList([
     definition('الاسم', session.name),
     definition('البريد الإلكتروني', session.email),
-    definition('المخيم', campName(session.campId)),
-    definition('تاريخ تقديم الطلب', formatDate(session.createdAt)),
+    definition('المخيم', request.campLabel),
+    definition('تاريخ تقديم الطلب', formatDate(request.createdAt)),
   ]);
 
   document.body.classList.remove('app-loading');

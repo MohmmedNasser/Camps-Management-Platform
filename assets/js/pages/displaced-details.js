@@ -36,9 +36,8 @@ import { icon } from '../ui/icons.js';
 import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
-import { can, inScope } from '../core/auth.js';
-import * as store from '../core/store.js';
-import * as select from '../core/selectors.js';
+import { can } from '../core/auth.js';
+import { isOrphan } from '../core/selectors.js';
 import { getDisplacedPerson, removeFamilyMember } from '../supabase/family-members.js';
 import { getFamilyByReferenceCode } from '../supabase/families.js';
 import { getFamilyAidHistory } from '../supabase/aids.js';
@@ -67,9 +66,9 @@ async function init({ session, content }) {
   content.innerHTML = loadingView();
 
   try {
-    const data = await store.load(() => collect(id, session));
+    const data = await collect(id, session);
 
-    if (!data.person || (session.role !== ROLES.CAMP_ADMIN && !inScope(data.person, session))) {
+    if (!data.person) {
       content.innerHTML = notFoundView();
       return;
     }
@@ -84,33 +83,18 @@ async function init({ session, content }) {
   }
 }
 
-function collect(id, session) {
-  if (session.role === ROLES.CAMP_ADMIN) return collectReal(id, session);
-
-  const person = store.displaced.get(id);
-  if (!person) return { person: null };
-  return {
-    person,
-    family: person.familyId ? select.familyWithStats(person.familyId) : null,
-    // Aid is distributed to the family, so this is the family's history.
-    aid: person.familyId ? select.aidForFamily(person.familyId) : [],
-    documents: store.documents
-      .list((row) => row.displacedId === id)
-      .map(select.documentRow),
-    campName: select.campName(person.campId),
-  };
-}
-
 /**
- * `person.campId !== session.campId` is redundant, UX-only narrowing — RLS
- * on `family_members` already prevents `getDisplacedPerson()` from
- * returning another camp's row at all (Phase 4.5 spec §1/§5.2). It only
- * picks the not-found copy for a same-camp id that genuinely doesn't
- * exist; it is not, and is not needed as, a security check.
+ * `person.campId !== session.campId` is redundant, UX-only narrowing for a
+ * Camp Admin — RLS on `family_members` already prevents `getDisplacedPerson()`
+ * from returning another camp's row at all (Phase 4.5 spec §1/§5.2). A Super
+ * Admin has no single "own camp" to compare against — RLS's `is_super_admin()`
+ * branch is what legitimately lets them open any camp's record here
+ * (PAGE_ACCESS: displaced-details.html is Super Admin/Camp Admin only).
  */
-async function collectReal(id, session) {
+async function collect(id, session) {
   const person = await getDisplacedPerson(id);
-  if (!person || person.campId !== session.campId) return { person: null };
+  if (!person) return { person: null };
+  if (session.role === ROLES.CAMP_ADMIN && person.campId !== session.campId) return { person: null };
 
   const family = person.familyId ? await getFamilyByReferenceCode(person.familyId) : null;
   const [aidRows, docsResult] = await Promise.all([
@@ -120,10 +104,10 @@ async function collectReal(id, session) {
 
   return {
     person,
-    family: family ? { ...family, campName: session.campLabel } : null,
+    family: family ? { ...family, campName: person.campName } : null,
     aid: aidRows.map(mapAidHistoryRow),
     documents: docsResult.rows.map(mapDocumentRow),
-    campName: session.campLabel,
+    campName: person.campName,
   };
 }
 
@@ -167,7 +151,7 @@ function header({ person, campName }) {
   const chips = [
     person.chronicDiseases ? badge('مرض مزمن', 'warning') : '',
     person.disability ? badge('إعاقة', 'error') : '',
-    select.isOrphan(person) ? badge('يتيم', 'info') : '',
+    isOrphan(person) ? badge('يتيم', 'info') : '',
     person.isPregnant ? badge('حامل', 'success') : '',
     person.isBreastfeeding ? badge('مرضعة', 'success') : '',
   ]
@@ -241,7 +225,7 @@ function personalPanel(person) {
     definition('المحافظة', labelOf(GOVERNORATES, person.governorate)),
     definition('المدينة', person.city),
     definition('الحي / المنطقة', person.area),
-    definition('يتيم', select.isOrphan(person) ? 'نعم' : 'لا'),
+    definition('يتيم', isOrphan(person) ? 'نعم' : 'لا'),
     // Maternity is not a yes/no question for a male record.
     definition('حامل', person.gender === 'female' ? (person.isPregnant ? 'نعم' : 'لا') : 'لا ينطبق'),
     definition(
@@ -454,20 +438,15 @@ function wire(content, session, { person }) {
     });
     if (!ok) return;
 
-    if (session.role === ROLES.CAMP_ADMIN) {
-      try {
-        await removeFamilyMember(person.id);
-        toast.success('تم الحذف', 'تم حذف سجل النازح.');
-        go('displaced.html');
-      } catch (error) {
-        console.error(error);
-        toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
-      }
-      return;
+    // displaced:delete is Camp-Admin-only (core/auth.js PERMISSIONS), so
+    // this control is never rendered for any other role in the first place.
+    try {
+      await removeFamilyMember(person.id);
+      toast.success('تم الحذف', 'تم حذف سجل النازح.');
+      go('displaced.html');
+    } catch (error) {
+      console.error(error);
+      toast.error('تعذر الحذف', 'قد لا تملك صلاحية حذف هذا السجل.');
     }
-
-    select.removeDisplaced(person.id);
-    toast.success('تم الحذف', 'تم حذف سجل النازح.');
-    go('displaced.html');
   });
 }

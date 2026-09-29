@@ -5,8 +5,9 @@
  * not cover a file number or a tent number: the domain has neither.
  *
  * Every view of the data — the table, the result count, the export — comes
- * from one call to `selectors.getFilteredDisplaced`, so the number on screen
- * is by construction the number of rows in the spreadsheet.
+ * from one call to `collect()` below, so the number on screen is by
+ * construction the number of rows in the spreadsheet. Fully real for both
+ * roles that can reach this page (Super Admin/Camp Admin) — no mock branch.
  */
 
 import { delegate, params, setParams, qs } from "../utils/dom.js";
@@ -42,8 +43,10 @@ import { pageUrl } from "../core/router.js";
 import { can } from "../core/auth.js";
 import * as store from "../core/store.js";
 import * as select from "../core/selectors.js";
-import { getCampDisplacedPersons, removeFamilyMember } from "../supabase/family-members.js";
+import { getCampDisplacedPersons, getAllDisplacedPersons, removeFamilyMember } from "../supabase/family-members.js";
 import { getFamilyIdsForAidFilter } from "../supabase/aids.js";
+import { listCampOptions } from "../supabase/camps.js";
+import { listOrganizationOptions } from "../supabase/organizations.js";
 import { DISPLACED_COLUMNS, displacedExportRow } from "../core/exports.js";
 import { exportSheet, timestampedName } from "../utils/xlsx.js";
 import {
@@ -85,8 +88,14 @@ FILTER_KEYS.forEach((key) => {
     state[key] = "";
 });
 
+/** Fetched once in init() — filterSpec() reads them back synchronously,
+ *  same "small session-lifetime cache" convention as core/auth.js's
+ *  campLabelFor(). */
+let campOptionsCache = [];
+let organizationOptionsCache = [];
+
 const shell = await mountShell({ active: "displaced.html", title: "النازحون" });
-if (shell) init(shell);
+if (shell) await init(shell);
 
 function readQuery() {
     const query = params();
@@ -120,7 +129,7 @@ function filterSpec(session) {
             name: "campId",
             label: "المخيم",
             group: "البيانات الأساسية",
-            options: select.campOptions(session),
+            options: campOptionsCache,
             value: state.campId,
         },
         {
@@ -210,7 +219,7 @@ function filterSpec(session) {
             name: "organizationId",
             label: "الجهة المانحة",
             group: "المساعدات",
-            options: select.organizationOptions(),
+            options: organizationOptionsCache,
             value: state.organizationId,
         },
     ].filter(Boolean);
@@ -218,10 +227,19 @@ function filterSpec(session) {
 
 /* ---- Entry --------------------------------------------------------------- */
 
-function init({ session, content }) {
+async function init({ session, content }) {
     readQuery();
+    content.innerHTML = skeletonTable(6);
 
     const isSuper = session.role === ROLES.SUPER_ADMIN;
+    // select.campOptions()/select.organizationOptions() read the mock store
+    // and never match a real camp/organization id (same trap Phase 4.6's
+    // aid-create.js flagged) — both option lists come from the real
+    // data-access layer instead.
+    [campOptionsCache, organizationOptionsCache] = await Promise.all([
+        isSuper ? listCampOptions() : Promise.resolve([]),
+        listOrganizationOptions(),
+    ]);
     const filters = filterSpec(session);
 
     content.innerHTML = `
@@ -314,21 +332,17 @@ function init({ session, content }) {
         });
         if (!ok) return;
 
-        if (session.role === ROLES.CAMP_ADMIN) {
-            try {
-                await removeFamilyMember(node.dataset.delete);
-                toast.success("تم الحذف", "تم حذف سجل النازح.");
-                load(session);
-            } catch (error) {
-                console.error(error);
-                toast.error("تعذر الحذف", "قد لا تملك صلاحية حذف هذا السجل.");
-            }
-            return;
+        // displaced:delete is Camp-Admin-only (core/auth.js PERMISSIONS), so
+        // this action is never wired up for any other role in the first
+        // place — no mock/Super Admin branch needed here.
+        try {
+            await removeFamilyMember(node.dataset.delete);
+            toast.success("تم الحذف", "تم حذف سجل النازح.");
+            load(session);
+        } catch (error) {
+            console.error(error);
+            toast.error("تعذر الحذف", "قد لا تملك صلاحية حذف هذا السجل.");
         }
-
-        select.removeDisplaced(node.dataset.delete);
-        toast.success("تم الحذف", "تم حذف سجل النازح.");
-        load(session);
     });
 
     delegate(content, "click", "[data-clear-search]", () => {
@@ -360,14 +374,16 @@ function init({ session, content }) {
  * preview passes the still-staged (not yet applied) values explicitly.
  */
 async function collect(session, filters = { query: state.q, ...filterValues() }) {
-    if (session.role !== ROLES.CAMP_ADMIN) {
-        return select.getFilteredDisplaced(session, filters);
-    }
+    const isSuper = session.role === ROLES.SUPER_ADMIN;
 
-    const rows = await getCampDisplacedPersons(session.campId);
+    // A Super Admin's rows span every camp, so the aid-type/donor lookup
+    // (and the campId filter itself) is scoped by the chosen `filters.campId`
+    // rather than the session's own — getFamilyIdsForAidFilter(undefined, …)
+    // searches across every camp when none is chosen yet.
+    const rows = isSuper ? await getAllDisplacedPersons() : await getCampDisplacedPersons(session.campId);
     const aidFamilyIds =
         filters.aidType || filters.organizationId
-            ? await getFamilyIdsForAidFilter(session.campId, {
+            ? await getFamilyIdsForAidFilter(isSuper ? filters.campId || undefined : session.campId, {
                   aidTypeCode: filters.aidType,
                   organizationId: filters.organizationId,
               })
@@ -410,9 +426,10 @@ async function load(session) {
 /**
  * Export exactly what is on screen.
  *
- * The rows come from the same `collect()` the table used, and the scope inside
- * `getFilteredDisplaced` is taken from the session — a Camp Admin cannot widen
- * it by editing `?campId=`.
+ * The rows come from the same `collect()` the table used. A Camp Admin's
+ * scope comes from `session.campId`, not a `?campId=` query param — RLS
+ * (`family_members_select_scoped`) enforces it independently either way, so
+ * a hand-edited URL cannot widen the export.
  */
 async function exportRows(session, trigger) {
     const original = trigger.innerHTML;

@@ -79,7 +79,7 @@ export function inputField({
 }
 
 /** Password input with a show/hide toggle. */
-export function passwordField({ name, label, required = false, hint = '', autocomplete = 'off', full = false }) {
+export function passwordField({ name, label, required = false, hint = '', autocomplete = 'new-password', full = false }) {
   const inner = `
     ${labelMarkup(name, label, required, false)}
     <div class="input-wrap input-wrap--action">

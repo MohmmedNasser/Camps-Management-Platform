@@ -73,6 +73,12 @@ export async function getFamilyAidHistory(familyId) {
  * `listAidDistributions()` already relies on
  * (`aid_distribution_types.aid_type.code`) rather than a deeper,
  * unproven nesting through the junction table.
+ *
+ * `campId` is optional: the Super Admin's platform-wide displaced list
+ * (Phase 4.19 follow-up) needs this same aid-type/donor family set across
+ * every camp, not just one — omitting it leaves the query unscoped, and RLS
+ * (`aid_distributions_select_scoped`'s `is_super_admin()` branch) is what
+ * actually allows that caller to see every camp's rows.
  */
 export async function getFamilyIdsForAidFilter(campId, { aidTypeCode = '', organizationId = '' } = {}) {
   const client = requireClient();
@@ -81,8 +87,8 @@ export async function getFamilyIdsForAidFilter(campId, { aidTypeCode = '', organ
     : 'aid_distribution_types(aid_type:aid_types(code))';
   let query = client
     .from('aid_distributions')
-    .select(`camp_id, ${typesRel}, aid_distribution_families(family:families(reference_code))`)
-    .eq('camp_id', campId);
+    .select(`camp_id, ${typesRel}, aid_distribution_families(family:families(reference_code))`);
+  if (campId) query = query.eq('camp_id', campId);
   if (organizationId) query = query.eq('organization_id', organizationId);
   if (aidTypeCode) query = query.eq('aid_distribution_types.aid_type.code', aidTypeCode);
 
@@ -106,6 +112,7 @@ export async function getFamilyIdsForAidFilter(campId, { aidTypeCode = '', organ
  */
 const DISTRIBUTION_SELECT =
   'id, distributed_on, all_families_selected, camp_id, created_at, ' +
+  'camp:camps!aid_distributions_camp_id_fkey(name), ' +
   'organization:organizations(id, name, responsible_person, phone), ' +
   'aid_distribution_types(aid_type:aid_types(code, label_ar)), ' +
   'aid_distribution_families(family:families(id, reference_code, ' +
@@ -145,6 +152,7 @@ function mapAidDistributionRow(row) {
     beneficiaries,
     date: row.distributed_on,
     campId: row.camp_id,
+    campName: row.camp?.name || '—',
     allFamiliesSelected: row.all_families_selected,
     createdAt: row.created_at,
     createdByName: row.created_by?.full_name || '—',
@@ -174,6 +182,19 @@ export async function getCampAidDistributions(campId) {
       .select(DISTRIBUTION_SELECT)
       .eq('camp_id', campId)
       .order('distributed_on', { ascending: false })
+  );
+  return rows.map(mapAidDistributionRow);
+}
+
+/**
+ * Every aid distribution platform-wide — the real Super Admin list. RLS
+ * (`aid_distributions_select_scoped`'s `is_super_admin()` branch) is what
+ * removes the camp boundary; no argument needed.
+ */
+export async function getAllAidDistributions() {
+  const client = requireClient();
+  const rows = await run(
+    client.from('aid_distributions').select(DISTRIBUTION_SELECT).order('distributed_on', { ascending: false })
   );
   return rows.map(mapAidDistributionRow);
 }
