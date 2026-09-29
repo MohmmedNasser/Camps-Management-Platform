@@ -1,6 +1,6 @@
 /**
- * Forgot password (prototype). Shows the confirmation state that the real
- * flow will show once an email is actually sent.
+ * Forgot password. Sends a real reset email through Supabase Auth; the
+ * confirmation never reveals whether the address is registered.
  */
 
 import { qs, ready, esc } from '../utils/dom.js';
@@ -8,7 +8,8 @@ import { rules } from '../utils/validators.js';
 import { authLayout } from '../ui/auth-layout.js';
 import { inputField, bindForm } from '../ui/form.js';
 import { button, alert } from '../ui/components.js';
-import { guestOnly } from '../core/router.js';
+import { guestOnly, pageUrl } from '../core/router.js';
+import { requestPasswordReset } from '../supabase/auth.js';
 
 if (!(await guestOnly())) {
   ready(render);
@@ -47,7 +48,18 @@ function render() {
 
   bindForm(form, {
     schema: { email: [rules.required('البريد الإلكتروني'), rules.email()] },
-    onSubmit: (values) => {
+    onSubmit: async (values) => {
+      const redirectTo = new URL(pageUrl('reset-password.html'), window.location.href).href;
+      try {
+        await requestPasswordReset(values.email.trim(), redirectTo);
+      } catch (error) {
+        form.insertAdjacentHTML('afterbegin', alert({
+          variant: 'error',
+          title: 'تعذر إرسال الرابط',
+          text: error.message || 'حدث خطأ غير متوقع.',
+        }));
+        return;
+      }
       qs('#forgot-card').innerHTML = `
         <div class="card__body u-text-center">
           <span class="status-icon status-icon--success">
@@ -58,7 +70,7 @@ function render() {
           </span>
           <h2 class="u-mt-4" style="font-size:var(--fs-h3)">تحقق من بريدك الإلكتروني</h2>
           <p class="u-mt-3 u-secondary">
-            أرسلنا رابط إعادة تعيين كلمة المرور إلى
+            إن كان هذا البريد مسجّلاً لدينا فقد أرسلنا رابط إعادة تعيين كلمة المرور إلى
             <span class="mono">${esc(values.email)}</span>.
           </p>
           <div class="u-mt-5">
