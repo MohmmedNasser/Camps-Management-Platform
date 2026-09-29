@@ -1,7 +1,7 @@
 // assets/js/supabase/families.js
 import { requireClient } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
-import { paginate, sort } from './query.js';
+import { paginate, sort, fetchAll, fetchAllIn } from './query.js';
 import { getDisplacedPerson } from './family-members.js';
 
 const SORT_COLUMNS = ['created_at', 'reference_code', 'updated_at'];
@@ -15,7 +15,7 @@ const SORT_COLUMNS = ['created_at', 'reference_code', 'updated_at'];
 async function attachFamilyStats(client, families) {
   const ids = families.map((f) => f.id);
   if (!ids.length) return families;
-  const stats = await run(client.from('family_stats').select('*').in('family_id', ids));
+  const stats = await fetchAllIn(() => client.from('family_stats').select('*'), 'family_id', ids, { order: ['family_id'] });
   const byFamily = new Map(stats.map((s) => [s.family_id, s]));
   return families.map((f) => ({ ...f, family_stats: byFamily.get(f.id) ?? null }));
 }
@@ -31,21 +31,25 @@ async function attachFamilyStats(client, families) {
  */
 export async function getCampFamilies(campId) {
   const client = requireClient();
-  const families = await run(
-    client
-      .from('families')
-      .select(
-        'id, reference_code, camp_id, notes, created_at, ' +
-          'head:family_members!families_head_member_id_fkey(full_name, tent_type)'
-      )
-      .eq('camp_id', campId)
+  const families = await fetchAll(
+    () =>
+      client
+        .from('families')
+        .select(
+          'id, reference_code, camp_id, notes, created_at, ' +
+            'head:family_members!families_head_member_id_fkey(full_name, tent_type)'
+        )
+        .eq('camp_id', campId),
+    { order: ['reference_code'] }
   );
   if (!families.length) return [];
 
   const ids = families.map((f) => f.id);
   const [stats, aidLinks] = await Promise.all([
-    run(client.from('family_stats').select('*').in('family_id', ids)),
-    run(client.from('aid_distribution_families').select('family_id').in('family_id', ids)),
+    fetchAllIn(() => client.from('family_stats').select('*'), 'family_id', ids, { order: ['family_id'] }),
+    fetchAllIn(() => client.from('aid_distribution_families').select('family_id'), 'family_id', ids, {
+      order: ['family_id', 'distribution_id'],
+    }),
   ]);
 
   const statsByFamily = new Map(stats.map((s) => [s.family_id, s]));
@@ -87,21 +91,25 @@ export async function getCampFamilies(campId) {
  */
 export async function getAllFamilies() {
   const client = requireClient();
-  const families = await run(
-    client
-      .from('families')
-      .select(
-        'id, reference_code, camp_id, notes, created_at, ' +
-          'camp:camps!families_camp_id_fkey(name), ' +
-          'head:family_members!families_head_member_id_fkey(full_name, tent_type)'
-      )
+  const families = await fetchAll(
+    () =>
+      client
+        .from('families')
+        .select(
+          'id, reference_code, camp_id, notes, created_at, ' +
+            'camp:camps!families_camp_id_fkey(name), ' +
+            'head:family_members!families_head_member_id_fkey(full_name, tent_type)'
+        ),
+    { order: ['reference_code'] }
   );
   if (!families.length) return [];
 
   const ids = families.map((f) => f.id);
   const [stats, aidLinks] = await Promise.all([
-    run(client.from('family_stats').select('*').in('family_id', ids)),
-    run(client.from('aid_distribution_families').select('family_id').in('family_id', ids)),
+    fetchAllIn(() => client.from('family_stats').select('*'), 'family_id', ids, { order: ['family_id'] }),
+    fetchAllIn(() => client.from('aid_distribution_families').select('family_id'), 'family_id', ids, {
+      order: ['family_id', 'distribution_id'],
+    }),
   ]);
 
   const statsByFamily = new Map(stats.map((s) => [s.family_id, s]));

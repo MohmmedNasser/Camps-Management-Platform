@@ -23,7 +23,7 @@ import { filterChips } from '../ui/toolbar.js';
 import { icon } from '../ui/icons.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
-import { listNotifications, markNotificationRead, markNotificationUnread, markAllNotificationsRead, mapNotificationRow } from '../supabase/notifications.js';
+import { listAllNotifications, markNotificationRead, markNotificationUnread, markAllNotificationsRead, mapNotificationRow } from '../supabase/notifications.js';
 
 const ICONS = { success: 'checkCircle', warning: 'alertTriangle', error: 'alertCircle', info: 'info' };
 
@@ -99,7 +99,7 @@ async function load(session) {
   target.innerHTML = skeletonTable(5);
 
   try {
-    const { rows: raw } = await listNotifications({ pageSize: 100 });
+    const raw = await listAllNotifications();
     currentAll = raw.map(mapNotificationRow);
     const rows = state.filter === 'unread' ? currentAll.filter((row) => !row.read) : currentAll;
 

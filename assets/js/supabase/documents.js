@@ -2,7 +2,9 @@
 // Phase 2 §25: metadata only — no file upload (Phase 3/Cloudinary).
 import { requireClient } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
-import { paginate, sort } from './query.js';
+import { paginate, sort, fetchAll } from './query.js';
+
+const DOCUMENT_ORDER = [['created_at', false], ['id', false]];
 import { DOCUMENT_CATEGORIES, labelOf } from '../core/config.js';
 
 const SORT_COLUMNS = ['created_at', 'name', 'category'];
@@ -103,9 +105,9 @@ function mapDocumentRow(row) {
  */
 export async function getCampDocuments(campId) {
   const client = requireClient();
-  const rows = await run(
-    client.from('documents').select(DOCUMENT_SELECT).eq('camp_id', campId).order('created_at', { ascending: false })
-  );
+  const rows = await fetchAll(() => client.from('documents').select(DOCUMENT_SELECT).eq('camp_id', campId), {
+    order: DOCUMENT_ORDER,
+  });
   return rows.map(mapDocumentRow);
 }
 
@@ -119,9 +121,9 @@ export async function getCampDocuments(campId) {
  */
 export async function getFamilyDocuments(familyId) {
   const client = requireClient();
-  const rows = await run(
-    client.from('documents').select(DOCUMENT_SELECT).eq('family_id', familyId).order('created_at', { ascending: false })
-  );
+  const rows = await fetchAll(() => client.from('documents').select(DOCUMENT_SELECT).eq('family_id', familyId), {
+    order: DOCUMENT_ORDER,
+  });
   return rows.map(mapDocumentRow);
 }
 
@@ -132,8 +134,6 @@ export async function getFamilyDocuments(familyId) {
  */
 export async function getAllDocuments() {
   const client = requireClient();
-  const rows = await run(
-    client.from('documents').select(DOCUMENT_SELECT).order('created_at', { ascending: false })
-  );
+  const rows = await fetchAll(() => client.from('documents').select(DOCUMENT_SELECT), { order: DOCUMENT_ORDER });
   return rows.map(mapDocumentRow);
 }

@@ -1,7 +1,7 @@
 // assets/js/supabase/family-members.js
 import { requireClient } from '../core/supabase-client.js';
 import { run, mapError, DataAccessError, ErrorType } from './errors.js';
-import { paginate, sort } from './query.js';
+import { paginate, sort, fetchAll, fetchAllIn } from './query.js';
 
 const SORT_COLUMNS = ['created_at', 'full_name', 'birth_date'];
 
@@ -14,7 +14,9 @@ const SORT_COLUMNS = ['created_at', 'full_name', 'birth_date'];
 async function attachFacts(client, members) {
   const ids = members.map((m) => m.id);
   if (!ids.length) return members;
-  const facts = await run(client.from('family_member_facts').select('*').in('member_id', ids));
+  const facts = await fetchAllIn(() => client.from('family_member_facts').select('*'), 'member_id', ids, {
+    order: ['member_id'],
+  });
   const byMember = new Map(facts.map((f) => [f.member_id, f]));
   return members.map((m) => ({ ...m, family_member_facts: byMember.get(m.id) ?? null }));
 }
@@ -117,7 +119,9 @@ const DISPLACED_SELECT =
  */
 export async function getAllDisplacedPersons() {
   const client = requireClient();
-  const rows = await run(client.from('family_members').select(DISPLACED_SELECT));
+  const rows = await fetchAll(() => client.from('family_members').select(DISPLACED_SELECT), {
+    order: ['created_at', 'id'],
+  });
   return rows.map(mapDisplacedRow);
 }
 
@@ -130,7 +134,9 @@ export async function getAllDisplacedPersons() {
  */
 export async function getCampDisplacedPersons(campId) {
   const client = requireClient();
-  const rows = await run(client.from('family_members').select(DISPLACED_SELECT).eq('camp_id', campId));
+  const rows = await fetchAll(() => client.from('family_members').select(DISPLACED_SELECT).eq('camp_id', campId), {
+    order: ['created_at', 'id'],
+  });
   return rows.map(mapDisplacedRow);
 }
 

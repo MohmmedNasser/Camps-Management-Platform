@@ -1,7 +1,7 @@
 // assets/js/supabase/notifications.js
 import { requireClient, currentUserId } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
-import { paginate } from './query.js';
+import { paginate, fetchAll } from './query.js';
 
 /** notifications row (snake_case) -> the shape every renderer (page list, dashboard stat via count only, header dropdown) reads. */
 export function mapNotificationRow(item) {
@@ -23,6 +23,12 @@ export async function listNotifications({ page, pageSize } = {}) {
   const { data, error, count } = await query;
   if (error) throw mapError(error);
   return { rows: data, total: count };
+}
+
+/** Every notification the caller can see (RLS: own only), newest first — beyond `MAX_PAGE_SIZE`. */
+export async function listAllNotifications() {
+  const client = requireClient();
+  return fetchAll(() => client.from('notifications').select('*'), { order: [['created_at', false], ['id', false]] });
 }
 
 export async function unreadNotificationCount() {

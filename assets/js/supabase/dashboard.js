@@ -8,7 +8,8 @@
  */
 
 import { requireClient } from '../core/supabase-client.js';
-import { run } from './errors.js';
+import { run, mapError } from './errors.js';
+import { fetchAll } from './query.js';
 import { getDashboardStatistics } from './statistics.js';
 import { listCamps, listCampsWithStats } from './camps.js';
 import { listProfiles } from './profiles.js';
@@ -18,6 +19,17 @@ import { getDisplacedPerson } from './family-members.js';
 import { getFamilyByReferenceCode } from './families.js';
 import { listDocuments } from './documents.js';
 import { unreadNotificationCount } from './notifications.js';
+
+/**
+ * Exact count of the rows a filter matches, computed by the database (RLS
+ * applied). `range(0, 0)` keeps the body to at most one row; HEAD is avoided
+ * because it shows as ERR_ABORTED in Chromium against this project.
+ */
+async function countMatching(query) {
+  const { count, error } = await query.range(0, 0);
+  if (error) throw mapError(error);
+  return count || 0;
+}
 
 function familySizeBuckets() {
   return [
@@ -31,17 +43,13 @@ function familySizeBuckets() {
 /** Gender split over family_members, optionally scoped to one camp. */
 export async function getGenderBreakdown(campId = null) {
   const client = requireClient();
-  let query = client.from('family_members').select('gender');
-  if (campId) query = query.eq('camp_id', campId);
-  const rows = await run(query);
-  return rows.reduce(
-    (acc, row) => {
-      if (row.gender === 'male') acc.males += 1;
-      else if (row.gender === 'female') acc.females += 1;
-      return acc;
-    },
-    { males: 0, females: 0 }
-  );
+  const byGender = (gender) => {
+    let query = client.from('family_members').select('id', { count: 'exact' }).eq('gender', gender);
+    if (campId) query = query.eq('camp_id', campId);
+    return countMatching(query);
+  };
+  const [males, females] = await Promise.all([byGender('male'), byGender('female')]);
+  return { males, females };
 }
 
 /**
@@ -51,9 +59,14 @@ export async function getGenderBreakdown(campId = null) {
  */
 export async function getDonorOrganizationsCount(campId = null) {
   const client = requireClient();
-  let query = client.from('aid_distributions').select('organization_id');
-  if (campId) query = query.eq('camp_id', campId);
-  const rows = await run(query);
+  const rows = await fetchAll(
+    () => {
+      let query = client.from('aid_distributions').select('id, organization_id');
+      if (campId) query = query.eq('camp_id', campId);
+      return query;
+    },
+    { order: ['id'] }
+  );
   return new Set(rows.map((row) => row.organization_id)).size;
 }
 
@@ -73,33 +86,35 @@ export async function getMonthlyRegistrations(campId = null, months = 8) {
   }
   const index = new Map(buckets.map((bucket) => [bucket.key, bucket]));
 
-  const rangeStart = buckets[0].date.toISOString();
-  let query = client.from('family_members').select('created_at').gte('created_at', rangeStart);
-  if (campId) query = query.eq('camp_id', campId);
-  const rows = await run(query);
-
-  rows.forEach((row) => {
-    const created = new Date(row.created_at);
-    if (Number.isNaN(created.getTime())) return;
-    const bucket = index.get(`${created.getFullYear()}-${created.getMonth()}`);
-    if (bucket) bucket.value += 1;
-  });
+  // One DB count per month bucket (half-open [start, next start) in the
+  // browser's local time, the same boundaries the old row bucketing used).
+  await Promise.all(
+    buckets.map(async (bucket, i) => {
+      const end = buckets[i + 1]?.date || new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      let query = client
+        .from('family_members')
+        .select('id', { count: 'exact' })
+        .gte('created_at', bucket.date.toISOString())
+        .lt('created_at', end.toISOString());
+      if (campId) query = query.eq('camp_id', campId);
+      index.get(bucket.key).value = await countMatching(query);
+    })
+  );
   return buckets;
 }
 
 /** Family-size distribution via family_stats.members_count. */
 export async function getFamilySizeDistribution(campId = null) {
   const client = requireClient();
-  let query = client.from('family_stats').select('members_count');
-  if (campId) query = query.eq('camp_id', campId);
-  const rows = await run(query);
-
   const buckets = familySizeBuckets();
-  rows.forEach((row) => {
-    const size = row.members_count;
-    const bucket = buckets.find((entry) => size >= entry.min && size <= entry.max);
-    if (bucket) bucket.count += 1;
-  });
+  await Promise.all(
+    buckets.map(async (bucket) => {
+      let query = client.from('family_stats').select('family_id', { count: 'exact' }).gte('members_count', bucket.min);
+      if (Number.isFinite(bucket.max)) query = query.lte('members_count', bucket.max);
+      if (campId) query = query.eq('camp_id', campId);
+      bucket.count = await countMatching(query);
+    })
+  );
   return buckets;
 }
 
@@ -113,9 +128,14 @@ export async function getFamilySizeDistribution(campId = null) {
 export async function getAidTypeBreakdown(campId = null) {
   const client = requireClient();
   const types = await listAidTypes({ activeOnly: true });
-  let query = client.from('aid_distribution_types').select('aid_type_id, aid_distributions!inner(camp_id)');
-  if (campId) query = query.eq('aid_distributions.camp_id', campId);
-  const rows = await run(query);
+  const rows = await fetchAll(
+    () => {
+      let query = client.from('aid_distribution_types').select('distribution_id, aid_type_id, aid_distributions!inner(camp_id)');
+      if (campId) query = query.eq('aid_distributions.camp_id', campId);
+      return query;
+    },
+    { order: ['distribution_id', 'aid_type_id'] }
+  );
 
   const counts = new Map();
   rows.forEach((row) => counts.set(row.aid_type_id, (counts.get(row.aid_type_id) || 0) + 1));

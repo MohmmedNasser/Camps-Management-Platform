@@ -1,7 +1,9 @@
 // assets/js/supabase/aids.js
 import { requireClient } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
-import { paginate, sort } from './query.js';
+import { paginate, sort, fetchAll, fetchAllIn } from './query.js';
+
+const DISTRIBUTION_ORDER = [['distributed_on', false], ['id', false]];
 
 const SORT_COLUMNS = ['distributed_on', 'created_at'];
 
@@ -85,14 +87,17 @@ export async function getFamilyIdsForAidFilter(campId, { aidTypeCode = '', organ
   const typesRel = aidTypeCode
     ? 'aid_distribution_types!inner(aid_type:aid_types!inner(code))'
     : 'aid_distribution_types(aid_type:aid_types(code))';
-  let query = client
-    .from('aid_distributions')
-    .select(`camp_id, ${typesRel}, aid_distribution_families(family:families(reference_code))`);
-  if (campId) query = query.eq('camp_id', campId);
-  if (organizationId) query = query.eq('organization_id', organizationId);
-  if (aidTypeCode) query = query.eq('aid_distribution_types.aid_type.code', aidTypeCode);
+  const build = () => {
+    let query = client
+      .from('aid_distributions')
+      .select(`id, camp_id, ${typesRel}, aid_distribution_families(family:families(reference_code))`);
+    if (campId) query = query.eq('camp_id', campId);
+    if (organizationId) query = query.eq('organization_id', organizationId);
+    if (aidTypeCode) query = query.eq('aid_distribution_types.aid_type.code', aidTypeCode);
+    return query;
+  };
 
-  const rows = await run(query);
+  const rows = await fetchAll(build, { order: ['id'] });
   const ids = new Set();
   rows.forEach((row) =>
     (row.aid_distribution_families || []).forEach((link) => {
@@ -176,12 +181,9 @@ function mapAidDistributionRow(row) {
  */
 export async function getCampAidDistributions(campId) {
   const client = requireClient();
-  const rows = await run(
-    client
-      .from('aid_distributions')
-      .select(DISTRIBUTION_SELECT)
-      .eq('camp_id', campId)
-      .order('distributed_on', { ascending: false })
+  const rows = await fetchAll(
+    () => client.from('aid_distributions').select(DISTRIBUTION_SELECT).eq('camp_id', campId),
+    { order: DISTRIBUTION_ORDER }
   );
   return rows.map(mapAidDistributionRow);
 }
@@ -193,9 +195,9 @@ export async function getCampAidDistributions(campId) {
  */
 export async function getAllAidDistributions() {
   const client = requireClient();
-  const rows = await run(
-    client.from('aid_distributions').select(DISTRIBUTION_SELECT).order('distributed_on', { ascending: false })
-  );
+  const rows = await fetchAll(() => client.from('aid_distributions').select(DISTRIBUTION_SELECT), {
+    order: DISTRIBUTION_ORDER,
+  });
   return rows.map(mapAidDistributionRow);
 }
 
@@ -218,9 +220,9 @@ export async function getAllAidDistributions() {
  */
 export async function getFamilyAidDistributions(familyDbId) {
   const client = requireClient();
-  const rows = await run(
-    client.from('aid_distributions').select(DISTRIBUTION_SELECT).order('distributed_on', { ascending: false })
-  );
+  const rows = await fetchAll(() => client.from('aid_distributions').select(DISTRIBUTION_SELECT), {
+    order: DISTRIBUTION_ORDER,
+  });
   return rows.map(mapAidDistributionRow).filter((row) => row.familyDbIds.includes(familyDbId));
 }
 

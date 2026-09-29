@@ -2343,3 +2343,25 @@ plan: `docs/superpowers/plans/2026-09-27-phase-4.18-test-stabilization.md`.
 - No `service_role` key or other credential was added to any browser-
   reachable file — this phase touched only Node-side test files that
   already held `service_role` access via `.env`, unchanged.
+
+## 35 · Phase 4.23 — Pagination & data scaling
+
+Spec: `docs/superpowers/specs/2026-09-29-phase-4.23-pagination-scaling-design.md`. No schema, RLS, RPC or Edge Function change.
+
+**Problem.** Whole-table reads (`getCampX()` / `getAllX()`) silently stop at PostgREST's `max-rows` (1000) with no error, and `.in('family_id', ids)` lists overflow the URL at ~200 ids. Demo data is far below both limits; this phase removes the cliff.
+
+**Batched reads (`assets/js/supabase/query.js`).** `fetchAll(makeQuery, { order, batchSize = FETCH_BATCH })` loops `.range()` until a short batch; `order` is mandatory and must end in a unique key; a failed batch throws (never partial data). `fetchAllIn()` chunks `in.(…)` lists at 100 values. Assumption: the project's `max-rows` is ≥ `FETCH_BATCH` (Supabase default 1000); a lower server cap would truncate silently.
+
+**Migrated to batched reads (return shapes unchanged):** `getCampFamilies`, `getAllFamilies` (stats/aid links via `fetchAllIn`), `getCampDisplacedPersons`, `getAllDisplacedPersons` (+ `attachFacts`), `getCampAidDistributions`, `getAllAidDistributions`, `getFamilyAidDistributions`, `getFamilyIdsForAidFilter`, `getCampDocuments`, `getFamilyDocuments`, `getAllDocuments`, `getCampMessages`, `getAllMessages`, `getOwnMessages`, `getCampRegistrationRequests`, and a new `listAllNotifications()` (the notifications page previously capped at 100).
+
+**Statistics.** `getGenderBreakdown`, `getMonthlyRegistrations`, `getFamilySizeDistribution` are now database `count` queries (`select(id, {count:'exact'}).range(0,0)`, never HEAD). `getDonorOrganizationsCount` and `getAidTypeBreakdown` read one narrow column in batches (PostgREST has no COUNT DISTINCT / GROUP BY). `statistics.html` still aggregates in `core/selectors.js`, but over the complete batched datasets — complete, not DB-aggregated.
+
+**Exports** run on each page's `collect()` — the full filtered set — so they stay complete beyond 1000 rows; verified against an independent count in `phase4.23-browser.test.mjs`.
+
+**Intentionally unchanged.** List pages still filter client-side with the shared `matchesXFilters()` predicates (`personFacts`, family-member characteristics, aid-type/donor family sets have no PostgREST equivalent; moving them to SQL would duplicate domain rules and risk list/count/export disagreement). Existing `listX()` paginated functions (`paginate()` + `count:'exact'`, `DEFAULT_PAGE_SIZE` 20 / `MAX_PAGE_SIZE` 100), small reference tables (camps, organizations, aid types, family options), single-row gets and mutations.
+
+**RLS.** Batching only adds `.order()`/`.range()` to the user-JWT client; scope is still the session plus RLS. Counts are computed over RLS-visible rows.
+
+**Verification.** `phase4.23-pagination-verification` (batch boundaries 1/7/N-1/N/N+1/1000 vs an independent service-role read, composite ordering, empty/one-row, 250-id `fetchAllIn`, failure propagation), `phase4.23-pagination-isolation` (two camps × three batch sizes, displaced own-family, anonymous, super admin, in-browser module counts and dashboard counts vs independent counts), `phase4.23-browser` (all affected pages × roles × six widths, body-based overflow check, export row count).
+
+**Known limitations / remaining risks.** Whole-dataset client memory and transfer at very large sizes (server-side slicing for filter-heavy lists deferred); `statistics.html` not DB-aggregated (needs RPCs/views); 1000-row batching proven with small `batchSize` rather than >1000 live rows, to avoid polluting the project.

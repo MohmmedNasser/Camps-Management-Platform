@@ -1,7 +1,7 @@
 // assets/js/supabase/registration-requests.js
 import { requireClient, currentUserId } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
-import { paginate, sort } from './query.js';
+import { paginate, sort, fetchAll } from './query.js';
 
 const SORT_COLUMNS = ['created_at', 'status'];
 
@@ -54,9 +54,9 @@ export async function listRegistrationRequests({ status, campId, page, pageSize,
  */
 export async function getCampRegistrationRequests(campId) {
   const client = requireClient();
-  const rows = await run(
-    client.from('registration_requests').select(REQUEST_SELECT).eq('camp_id', campId)
-  );
+  const rows = await fetchAll(() => client.from('registration_requests').select(REQUEST_SELECT).eq('camp_id', campId), {
+    order: ['created_at', 'id'],
+  });
   return rows.map((row) => mapRequestRow(row));
 }
 

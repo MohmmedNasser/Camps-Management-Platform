@@ -1,6 +1,9 @@
 // assets/js/supabase/messages.js
 import { requireClient, currentUserId } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
+import { fetchAll } from './query.js';
+
+const MESSAGE_ORDER = [['created_at', false], ['id', false]];
 
 const MESSAGE_SELECT =
   'id, sender_id, camp_id, recipient_role, recipient_id, subject, body, status, reply, ' +
@@ -35,9 +38,9 @@ function mapMessageRow(row) {
  */
 export async function getCampMessages(campId) {
   const client = requireClient();
-  const rows = await run(
-    client.from('messages').select(MESSAGE_SELECT).eq('camp_id', campId).order('created_at', { ascending: false })
-  );
+  const rows = await fetchAll(() => client.from('messages').select(MESSAGE_SELECT).eq('camp_id', campId), {
+    order: MESSAGE_ORDER,
+  });
   return rows.map(mapMessageRow);
 }
 
@@ -45,7 +48,7 @@ export async function getCampMessages(campId) {
  *  branch is what actually removes the camp boundary here. */
 export async function getAllMessages() {
   const client = requireClient();
-  const rows = await run(client.from('messages').select(MESSAGE_SELECT).order('created_at', { ascending: false }));
+  const rows = await fetchAll(() => client.from('messages').select(MESSAGE_SELECT), { order: MESSAGE_ORDER });
   return rows.map(mapMessageRow);
 }
 
@@ -55,9 +58,9 @@ export async function getOwnMessages() {
   const client = requireClient();
   const userId = await currentUserId();
   if (!userId) return [];
-  const rows = await run(
-    client.from('messages').select(MESSAGE_SELECT).eq('sender_id', userId).order('created_at', { ascending: false })
-  );
+  const rows = await fetchAll(() => client.from('messages').select(MESSAGE_SELECT).eq('sender_id', userId), {
+    order: MESSAGE_ORDER,
+  });
   return rows.map(mapMessageRow);
 }
 
