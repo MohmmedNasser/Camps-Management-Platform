@@ -3,6 +3,7 @@ import { requireClient } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
 import { paginate, sort, fetchAll, fetchAllIn } from './query.js';
 import { getDisplacedPerson } from './family-members.js';
+import { applyFamilyFilters, refineFamilyRows, mapFamilyOverviewRow, FAMILY_OVERVIEW_COLUMNS } from './family-filters.js';
 
 const SORT_COLUMNS = ['created_at', 'reference_code', 'updated_at'];
 
@@ -21,126 +22,33 @@ async function attachFamilyStats(client, families) {
 }
 
 /**
- * All families in one camp, with head name/tent type embedded (via the
- * families_head_member_id_fkey relationship) and family_stats attached —
- * shaped to exactly the field names resultsView() and familyExportRow()
- * already read. RLS (family_stats/family_member_facts are
- * security_invoker views over family_members' own RLS) independently
- * scopes every row to the caller's camp regardless of the campId argument
- * (Phase 4.4 spec §1/§2).
+ * Every family matching `filters` (the families-page filter shape), read from
+ * the `family_overview` view in ONE query — head, camp, member/child/orphan
+ * counts and aid count are already joined, and every filter that has an exact
+ * SQL equivalent runs in the database (family-filters.js). Terms the server
+ * cannot match identically are refined client-side by the legacy predicate,
+ * so the result equals `matchesFamilyFilters` over the whole set. Returned
+ * rows keep the field names resultsView() and familyExportRow() read.
+ * The view is `security_invoker`: RLS scopes every row to the caller
+ * regardless of any camp filter (Phase 4.24 spec §6).
  */
-export async function getCampFamilies(campId) {
+async function fetchFamilyOverview(filters, extra = (q) => q) {
   const client = requireClient();
-  const families = await fetchAll(
-    () =>
-      client
-        .from('families')
-        .select(
-          'id, reference_code, camp_id, notes, created_at, ' +
-            'head:family_members!families_head_member_id_fkey(full_name, tent_type)'
-        )
-        .eq('camp_id', campId),
+  const rows = await fetchAll(
+    () => applyFamilyFilters(extra(client.from('family_overview').select(FAMILY_OVERVIEW_COLUMNS)), filters),
     { order: ['reference_code'] }
   );
-  if (!families.length) return [];
-
-  const ids = families.map((f) => f.id);
-  const [stats, aidLinks] = await Promise.all([
-    fetchAllIn(() => client.from('family_stats').select('*'), 'family_id', ids, { order: ['family_id'] }),
-    fetchAllIn(() => client.from('aid_distribution_families').select('family_id'), 'family_id', ids, {
-      order: ['family_id', 'distribution_id'],
-    }),
-  ]);
-
-  const statsByFamily = new Map(stats.map((s) => [s.family_id, s]));
-  const aidCountByFamily = new Map();
-  aidLinks.forEach((row) =>
-    aidCountByFamily.set(row.family_id, (aidCountByFamily.get(row.family_id) || 0) + 1)
-  );
-
-  return families.map((family) => {
-    const s = statsByFamily.get(family.id) || {};
-    return {
-      id: family.reference_code,
-      headName: family.head?.full_name || '—',
-      headTentType: family.head?.tent_type || '',
-      notes: family.notes || '',
-      membersCount: Number(s.members_count) || 0,
-      childrenUnder18: Number(s.children_under_18) || 0,
-      childrenUnder3: Number(s.children_under_3) || 0,
-      childrenUnder2: Number(s.children_under_2) || 0,
-      childrenUnder1: Number(s.children_under_1) || 0,
-      orphans: Number(s.orphans) || 0,
-      chronic: Number(s.chronic) || 0,
-      disability: Number(s.disability) || 0,
-      pregnant: Number(s.pregnant) || 0,
-      breastfeeding: Number(s.breastfeeding) || 0,
-      aidCount: aidCountByFamily.get(family.id) || 0,
-      createdAt: family.created_at,
-    };
-  });
+  return refineFamilyRows(rows.map(mapFamilyOverviewRow), filters);
 }
 
-/**
- * Every family platform-wide — the real Super Admin list. RLS
- * (`is_super_admin()` branch on the tables `family_stats`/
- * `aid_distribution_families` sit behind) is what removes the camp
- * boundary; the only addition over `getCampFamilies()` is the camp name
- * embed, since a Super Admin's table shows a "المخيم" column the Camp
- * Admin one doesn't need.
- */
-export async function getAllFamilies() {
-  const client = requireClient();
-  const families = await fetchAll(
-    () =>
-      client
-        .from('families')
-        .select(
-          'id, reference_code, camp_id, notes, created_at, ' +
-            'camp:camps!families_camp_id_fkey(name), ' +
-            'head:family_members!families_head_member_id_fkey(full_name, tent_type)'
-        ),
-    { order: ['reference_code'] }
-  );
-  if (!families.length) return [];
+/** Camp Admin list: `campId` is a convenience narrowing — RLS is the boundary. */
+export function getCampFamilies(campId, filters = {}) {
+  return fetchFamilyOverview(filters, (q) => q.eq('camp_id', campId));
+}
 
-  const ids = families.map((f) => f.id);
-  const [stats, aidLinks] = await Promise.all([
-    fetchAllIn(() => client.from('family_stats').select('*'), 'family_id', ids, { order: ['family_id'] }),
-    fetchAllIn(() => client.from('aid_distribution_families').select('family_id'), 'family_id', ids, {
-      order: ['family_id', 'distribution_id'],
-    }),
-  ]);
-
-  const statsByFamily = new Map(stats.map((s) => [s.family_id, s]));
-  const aidCountByFamily = new Map();
-  aidLinks.forEach((row) =>
-    aidCountByFamily.set(row.family_id, (aidCountByFamily.get(row.family_id) || 0) + 1)
-  );
-
-  return families.map((family) => {
-    const s = statsByFamily.get(family.id) || {};
-    return {
-      id: family.reference_code,
-      campId: family.camp_id,
-      campName: family.camp?.name || '—',
-      headName: family.head?.full_name || '—',
-      headTentType: family.head?.tent_type || '',
-      notes: family.notes || '',
-      membersCount: Number(s.members_count) || 0,
-      childrenUnder18: Number(s.children_under_18) || 0,
-      childrenUnder3: Number(s.children_under_3) || 0,
-      childrenUnder2: Number(s.children_under_2) || 0,
-      childrenUnder1: Number(s.children_under_1) || 0,
-      orphans: Number(s.orphans) || 0,
-      chronic: Number(s.chronic) || 0,
-      disability: Number(s.disability) || 0,
-      pregnant: Number(s.pregnant) || 0,
-      breastfeeding: Number(s.breastfeeding) || 0,
-      aidCount: aidCountByFamily.get(family.id) || 0,
-      createdAt: family.created_at,
-    };
-  });
+/** Super Admin list: every family platform-wide (RLS `is_super_admin()`), optionally filtered. */
+export function getAllFamilies(filters = {}) {
+  return fetchFamilyOverview(filters);
 }
 
 /**

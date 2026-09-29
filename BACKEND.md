@@ -2365,3 +2365,26 @@ Spec: `docs/superpowers/specs/2026-09-29-phase-4.23-pagination-scaling-design.md
 **Verification.** `phase4.23-pagination-verification` (batch boundaries 1/7/N-1/N/N+1/1000 vs an independent service-role read, composite ordering, empty/one-row, 250-id `fetchAllIn`, failure propagation), `phase4.23-pagination-isolation` (two camps × three batch sizes, displaced own-family, anonymous, super admin, in-browser module counts and dashboard counts vs independent counts), `phase4.23-browser` (all affected pages × roles × six widths, body-based overflow check, export row count).
 
 **Known limitations / remaining risks.** Whole-dataset client memory and transfer at very large sizes (server-side slicing for filter-heavy lists deferred); `statistics.html` not DB-aggregated (needs RPCs/views); 1000-row batching proven with small `batchSize` rather than >1000 live rows, to avoid polluting the project.
+
+---
+
+## 36 · Phase 4.24 — Server-side family filtering & statistics aggregation
+
+Spec: `docs/superpowers/specs/2026-09-29-phase-4.24-server-side-filtering-aggregation-design.md` (decision matrix for every filter/statistic). Migration: `20260929010000_phase4_24_family_overview_statistics_report.sql`. Additive only — no RLS, index, Edge Function or existing-object change.
+
+**New objects (both run as the caller; no `SECURITY DEFINER`)**
+
+| Object | Kind | Purpose |
+|---|---|---|
+| `public.family_overview` | view, `security_invoker=true`, `SELECT` to `authenticated` only | one row per family: head, camp name, `family_stats` counts, aid count. Replaces 3 client reads. |
+| `public.get_statistics_report(p_tz text default 'UTC')` | `SECURITY INVOKER` function → `jsonb`, `EXECUTE` to `authenticated` only, refuses displaced callers | every `statistics.html` figure except the per-camp table; enum breakdowns are value→count (labels stay in `config.js`); `p_tz` buckets months in the browser's zone |
+
+**Migrated to the database:** families list — camp, size bucket, has-children<18/<3/<2/<1, orphan, chronic, breastfeeding, pregnant, and text search (reference code / head name / notes) via `applyFamilyFilters()` (`assets/js/supabase/family-filters.js`). `getCampFamilies(campId, filters)` / `getAllFamilies(filters)` keep their row shape; list, count and Excel export still share the one `collect()`, so export is the complete filtered set. Statistics: all headline counters, monthly registrations, aid by type/organization/month, top families, family-size / age / work / tent / origin / document-category distributions (`statistics-report.js` shapes the JSON; `getStatisticsReport()` in `statistics.js`).
+
+**Left client-side, on purpose:** search terms containing `% _ \ * " —` (LIKE wildcards / PostgREST aliases have no exact server equivalent → `refineFamilyRows()` re-applies the legacy `matchesFamilyFilters` so results are identical); displaced-persons, aid, documents, registration-request and message list filters (need joined names / aid-set EXISTS / nested search, tiny per-camp volume, and JS-vs-SQL age boundary would make list and badges disagree); per-camp statistics table (`listCampsWithStats`, 4.10). `selectors.js` statistics functions remain as the test oracle.
+
+**Security:** RLS is unchanged and remains the boundary. Verified with real sessions: anonymous denied on both objects; Camp Admin sees only own camp in the view (a foreign `campId` filter returns 0) and own-camp totals from the report; displaced refused by the report and limited to own family in the view; invalid `p_tz` and unknown parameters rejected; no service key in `assets/`/`pages/`. Advisors: no new findings.
+
+**Known limits:** UI pagination is still client-side over the filtered set (server pagination deferred); age uses server `current_date` in statistics (JS used the browser's date — differs only on a birthday boundary); top-N tie order is by reference code.
+
+**Tests:** `phase4.24-filtering-verification` (view counts vs raw-member JS facts; 39 equivalence cases incl. wildcard/quote chars), `-statistics-verification` (report vs legacy selectors + independent counts), `-isolation`, `-browser` (six widths, families search/export, statistics cards vs SQL).
