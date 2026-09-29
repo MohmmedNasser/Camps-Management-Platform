@@ -74,8 +74,8 @@ function render(session, request) {
   document.title = 'طلبك قيد المراجعة · إدارة المخيمات';
 
   on(qs('[data-refresh]'), 'click', () => window.location.reload());
-  on(qs('[data-logout]'), 'click', () => {
-    logout();
+  on(qs('[data-logout]'), 'click', async () => {
+    await logout();
     window.location.href = 'login.html';
   });
 }

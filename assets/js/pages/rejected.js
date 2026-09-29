@@ -71,10 +71,16 @@ function render(session, { request, campLabel }) {
   document.title = 'تم رفض طلب التسجيل · إدارة المخيمات';
 
   // A new application starts from a signed-out state.
-  on(qs('[data-restart]'), 'click', () => logout());
-  on(qs('[data-logout]'), 'click', (event) => {
+  // Await sign-out before navigating: leaving mid-request can strand a
+  // half-revoked session that the next page reports as a missing profile.
+  on(qs('[data-restart]'), 'click', async (event) => {
     event.preventDefault();
-    logout();
+    await logout();
+    window.location.href = 'register.html';
+  });
+  on(qs('[data-logout]'), 'click', async (event) => {
+    event.preventDefault();
+    await logout();
     window.location.href = 'login.html';
   });
 }
