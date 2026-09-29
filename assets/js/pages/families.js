@@ -35,7 +35,6 @@ import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
-import { matchesFamilyFilters } from '../core/selectors.js';
 import { getCampFamilies, getAllFamilies, deleteFamily } from '../supabase/families.js';
 import { listCampOptions } from '../supabase/camps.js';
 import { FAMILY_COLUMNS, familyExportRow } from '../core/exports.js';
@@ -309,8 +308,7 @@ async function init({ session, content }) {
  */
 async function collect(session, filters = { query: state.q, ...filterValues() }) {
   const isSuper = session.role === ROLES.SUPER_ADMIN;
-  const rows = isSuper ? await getAllFamilies() : await getCampFamilies(session.campId);
-  return rows.filter((family) => matchesFamilyFilters(family, filters));
+  return isSuper ? getAllFamilies(filters) : getCampFamilies(session.campId, filters);
 }
 
 async function load(session) {

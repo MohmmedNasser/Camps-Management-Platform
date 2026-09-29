@@ -1,8 +1,8 @@
 /**
  * Statistics (Super Admin only).
  *
- * Every number here comes from a selector, never from a filter written in the
- * page — the same functions will back the reporting queries after the port.
+ * Every number here comes from `get_statistics_report()` (database
+ * aggregation, Phase 4.24) plus `listCampsWithStats()` for the per-camp table.
  * Charts degrade to CSS bars when the Chart.js CDN is unavailable.
  */
 
@@ -31,24 +31,7 @@ import {
   legendItems,
 } from '../ui/charts.js';
 import { pageUrl } from '../core/router.js';
-import {
-  statistics,
-  displacedByMonth,
-  aidByType,
-  aidByOrganization,
-  aidCountByMonth,
-  familySizeDistribution,
-  ageDistribution,
-  workStatusDistribution,
-  tentTypeDistribution,
-  originDistribution,
-  topFamiliesByAid,
-  documentsByCategory,
-} from '../core/selectors.js';
-import { getAllDisplacedPersons } from '../supabase/family-members.js';
-import { getAllFamilies } from '../supabase/families.js';
-import { getAllAidDistributions } from '../supabase/aids.js';
-import { getAllDocuments } from '../supabase/documents.js';
+import { getStatisticsReport } from '../supabase/statistics.js';
 import { listCampsWithStats } from '../supabase/camps.js';
 import { CHART_COLORS } from '../core/config.js';
 
@@ -86,28 +69,11 @@ async function init({ session, content }) {
 }
 
 async function collect() {
-  const [people, families, aidRows, documents, camps] = await Promise.all([
-    getAllDisplacedPersons(),
-    getAllFamilies(),
-    getAllAidDistributions(),
-    getAllDocuments(),
-    listCampsWithStats(),
-  ]);
-
+  const [report, camps] = await Promise.all([getStatisticsReport(), listCampsWithStats()]);
   return {
-    stats: statistics({ people, families, aidRows, documents, camps }),
+    ...report,
+    stats: { ...report.stats, camps: camps.length, campAdmins: camps.reduce((sum, camp) => sum + (camp.adminsCount || 0), 0) },
     camps,
-    byMonth: displacedByMonth(people, 8),
-    aidByType: aidByType(aidRows),
-    aidByOrganization: aidByOrganization(aidRows),
-    aidCountByMonth: aidCountByMonth(aidRows, 8),
-    familySizes: familySizeDistribution(families),
-    ages: ageDistribution(people),
-    work: workStatusDistribution(people),
-    tents: tentTypeDistribution(people),
-    origins: originDistribution(people),
-    topFamilies: topFamiliesByAid(aidRows, 5),
-    documents: documentsByCategory(documents).filter((entry) => entry.count > 0),
   };
 }
 
