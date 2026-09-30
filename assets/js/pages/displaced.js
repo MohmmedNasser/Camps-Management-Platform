@@ -4,10 +4,14 @@
  * Search covers name, national ID, phone and family ID. It deliberately does
  * not cover a file number or a tent number: the domain has neither.
  *
- * Every view of the data — the table, the result count, the export — comes
- * from one call to `collect()` below, so the number on screen is by
- * construction the number of rows in the spreadsheet. Fully real for both
- * roles that can reach this page (Super Admin/Camp Admin) — no mock branch.
+ * Filtering, counting and paging happen in PostgreSQL
+ * (`list_displaced_persons`, Phase 4.25): the table asks for one page, the
+ * count and the filter sheet's live preview come from the database total, and
+ * the Excel export re-runs the SAME filters over every page (`appliedFilters()`
+ * is the single source of them), so the number on screen is by construction
+ * the number of rows in the spreadsheet. Scope is RLS alone — a hand-edited
+ * `?campId=` can only narrow. Fully real for both roles that can reach this
+ * page (Super Admin/Camp Admin) — no mock branch.
  */
 
 import { delegate, params, setParams, qs } from "../utils/dom.js";
@@ -43,8 +47,7 @@ import { pageUrl } from "../core/router.js";
 import { can } from "../core/auth.js";
 import * as store from "../core/store.js";
 import * as select from "../core/selectors.js";
-import { getCampDisplacedPersons, getAllDisplacedPersons, removeFamilyMember } from "../supabase/family-members.js";
-import { getFamilyIdsForAidFilter } from "../supabase/aids.js";
+import { listDisplacedPage, countDisplaced, listAllDisplaced, removeFamilyMember } from "../supabase/family-members.js";
 import { listCampOptions } from "../supabase/camps.js";
 import { listOrganizationOptions } from "../supabase/organizations.js";
 import { DISPLACED_COLUMNS, displacedExportRow } from "../core/exports.js";
@@ -87,6 +90,9 @@ const state = { q: "", page: 1 };
 FILTER_KEYS.forEach((key) => {
     state[key] = "";
 });
+
+/** Newest request wins: a slow response must never overwrite a later one. */
+let loadSeq = 0;
 
 /** Fetched once in init() — filterSpec() reads them back synchronously,
  *  same "small session-lifetime cache" convention as core/auth.js's
@@ -291,8 +297,7 @@ async function init({ session, content }) {
         getFilters: () => filterSpec(session),
         // Live count for the values staged inside the sheet, read through the
         // exact same query the table and export use — nothing bespoke here.
-        onPreview: (staged) =>
-            collect(session, { query: state.q, ...staged }).then((rows) => rows.length),
+        onPreview: (staged) => countDisplaced({ query: state.q, ...staged }),
     });
 
     delegate(content, "click", "[data-page]", (event, node) => {
@@ -369,42 +374,40 @@ async function init({ session, content }) {
 /* ---- Data + rendering ----------------------------------------------------- */
 
 /**
- * The single query behind the table, the count and the export. `filters`
- * defaults to the currently-applied state, but the filter sheet's live
- * preview passes the still-staged (not yet applied) values explicitly.
+ * The filters currently applied — the one description of "what is on screen"
+ * that both the page request and the export use.
  */
-async function collect(session, filters = { query: state.q, ...filterValues() }) {
-    const isSuper = session.role === ROLES.SUPER_ADMIN;
-
-    // A Super Admin's rows span every camp, so the aid-type/donor lookup
-    // (and the campId filter itself) is scoped by the chosen `filters.campId`
-    // rather than the session's own — getFamilyIdsForAidFilter(undefined, …)
-    // searches across every camp when none is chosen yet.
-    const rows = isSuper ? await getAllDisplacedPersons() : await getCampDisplacedPersons(session.campId);
-    const aidFamilyIds =
-        filters.aidType || filters.organizationId
-            ? await getFamilyIdsForAidFilter(isSuper ? filters.campId || undefined : session.campId, {
-                  aidTypeCode: filters.aidType,
-                  organizationId: filters.organizationId,
-              })
-            : null;
-    return rows.filter((row) => select.matchesDisplacedFilters(row, filters, { aidFamilyIds }));
+function appliedFilters() {
+    return { query: state.q, ...filterValues() };
 }
 
 async function load(session) {
     const target = qs("#results");
     if (!target) return;
+    const seq = ++loadSeq;
     target.innerHTML = skeletonTable(6);
 
     try {
-        const rows = await store.load(() => collect(session));
-        target.innerHTML = resultsView(session, rows);
+        const filters = appliedFilters();
+        let result = await store.load(() => listDisplacedPage(filters, { page: state.page }));
+        if (seq !== loadSeq) return;
+
+        // A page past the end (stale ?page= or rows just deleted) shows the
+        // last page, as the client-side slicer always did.
+        const pages = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
+        if (result.total > 0 && state.page > pages) {
+            state.page = pages;
+            result = await listDisplacedPage(filters, { page: pages });
+            if (seq !== loadSeq) return;
+        }
+
+        target.innerHTML = resultsView(session, result);
 
         const summary = qs("#summary");
         if (summary) {
             summary.innerHTML = filterSummary({
                 active: activeFilters(filterSpec(session), filterValues()),
-                total: rows.length,
+                total: result.total,
                 noun: "نازح",
                 query: state.q,
             });
@@ -415,6 +418,7 @@ async function load(session) {
         // needs to keep it current.
         syncFilterButton(document, activeFilterCount());
     } catch (error) {
+        if (seq !== loadSeq) return;
         console.error(error);
         target.innerHTML = errorState({ retryAttrs: "data-retry" });
         delegate(target, "click", "[data-retry]", () => load(session));
@@ -426,10 +430,10 @@ async function load(session) {
 /**
  * Export exactly what is on screen.
  *
- * The rows come from the same `collect()` the table used. A Camp Admin's
- * scope comes from `session.campId`, not a `?campId=` query param — RLS
- * (`family_members_select_scoped`) enforces it independently either way, so
- * a hand-edited URL cannot widen the export.
+ * The rows are every page of the same filters the table is showing
+ * (`appliedFilters()`), read in fixed-order batches so nothing is skipped or
+ * repeated. Scope is RLS (`family_members_select_scoped`), not a `?campId=`
+ * query param, so a hand-edited URL cannot widen the export.
  */
 async function exportRows(session, trigger) {
     const original = trigger.innerHTML;
@@ -437,7 +441,7 @@ async function exportRows(session, trigger) {
     trigger.innerHTML = `<span class="btn__spinner"></span><span>جارٍ تجهيز ملف Excel…</span>`;
 
     try {
-        const rows = await store.load(() => collect(session), 120);
+        const rows = await store.load(() => listAllDisplaced(appliedFilters()), 120);
 
         if (!rows.length) {
             toast.error(
@@ -470,12 +474,10 @@ async function exportRows(session, trigger) {
 
 /* ---- Table ---------------------------------------------------------------- */
 
-function resultsView(session, rows) {
-    if (!rows.length) return emptyView();
+function resultsView(session, { rows: slice, total }) {
+    if (!total) return emptyView();
 
-    const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-    const page = Math.min(state.page, pages);
-    const slice = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const page = state.page;
     const isSuper = session.role === ROLES.SUPER_ADMIN;
 
     const columns = [
@@ -552,14 +554,14 @@ function resultsView(session, rows) {
     ];
 
     return `
-    ${resultBar({ count: slice.length, total: rows.length, noun: "نازح" })}
+    ${resultBar({ count: slice.length, total, noun: "نازح" })}
     ${dataTable({
         columns,
         rows: slice,
         caption: "سجل النازحين",
         foot:
-            rows.length > PAGE_SIZE
-                ? pagination({ page, pageSize: PAGE_SIZE, total: rows.length })
+            total > PAGE_SIZE
+                ? pagination({ page, pageSize: PAGE_SIZE, total })
                 : "",
     })}`;
 }

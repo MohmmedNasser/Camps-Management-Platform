@@ -11,9 +11,8 @@
  * column anywhere below.
  */
 
-import { ageFrom } from '../utils/format.js';
 import { labelOf, GENDERS, TENT_TYPES, GOVERNORATES, WORK_STATUSES, INCOME_SOURCES } from './config.js';
-import { personFacts } from './selectors.js';
+import { personFacts, ageOf } from './selectors.js';
 
 const yesNo = (value) => (value ? 'نعم' : 'لا');
 
@@ -45,7 +44,7 @@ export const DISPLACED_COLUMNS = [
 /** One spreadsheet row from one displaced record. */
 export function displacedExportRow(person) {
   const facts = personFacts(person);
-  const age = ageFrom(person.birthDate);
+  const age = ageOf(person);
 
   return {
     fullName: person.fullName,

@@ -1,6 +1,12 @@
 /**
  * Aid records.
  *
+ * Filtering, counting, the four summary figures and paging all happen in
+ * PostgreSQL (`list_aid_distributions`, Phase 4.25): the page asks for one
+ * page of rows plus `{ total, summary }`, and the Excel export re-runs the
+ * SAME filters (`currentFilters()`) over every page. Scope is RLS alone (all /
+ * own camp / own family).
+ *
  * Two audiences, one route: a Camp Admin manages the camp's records, while a
  * displaced person only ever reads their own history — creating, editing and
  * deleting aid is Camp Admin work by domain rule, so no control appears here
@@ -27,17 +33,11 @@ import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
 import { can } from '../core/auth.js';
 import * as store from '../core/store.js';
-import { matchesAidFilters } from '../core/selectors.js';
 import { ROLES, AID_TYPES, PAGE_SIZE } from '../core/config.js';
 import { AID_COLUMNS, aidExportRow } from '../core/exports.js';
 import { exportSheet, timestampedName } from '../utils/xlsx.js';
-import {
-  getCampAidDistributions,
-  getAllAidDistributions,
-  deleteAidDistribution,
-  getFamilyAidDistributions,
-} from '../supabase/aids.js';
-import { getCampFamilyOptions, getAllFamilyOptions, getOwnFamily } from '../supabase/families.js';
+import { listAidPage, listAllAid, deleteAidDistribution } from '../supabase/aids.js';
+import { getCampFamilyOptions, getAllFamilyOptions } from '../supabase/families.js';
 import { listOrganizationOptions } from '../supabase/organizations.js';
 
 // Populated once, before the first render, for a real Camp Admin session —
@@ -55,9 +55,11 @@ const superAdminOptions = { organizations: [], families: [] };
 // same reasoning as campAdminOptions above: filterSpec() must stay
 // synchronous, so the real organization list is fetched once here.
 let ownOrganizations = [];
-let ownFamily = null;
 
 const state = { q: '', type: '', organizationId: '', familyId: '', page: 1 };
+
+/** Newest request wins: a slow response must never overwrite a later one. */
+let loadSeq = 0;
 
 const shell = await mountShell({ active: 'aid.html', title: 'المساعدات' });
 if (shell) init(shell);
@@ -126,9 +128,7 @@ async function init({ session, content }) {
     superAdminOptions.families = families;
   } else if (session.role === ROLES.DISPLACED) {
     content.innerHTML = skeletonTable(6);
-    const [organizations, family] = await Promise.all([listOrganizationOptions(), getOwnFamily(session)]);
-    ownOrganizations = organizations;
-    ownFamily = family;
+    ownOrganizations = await listOrganizationOptions();
   }
 
   renderPage(session, content);
@@ -243,57 +243,49 @@ function renderPage(session, content) {
 
 /* ---- Data + rendering ------------------------------------------------------ */
 
+/**
+ * The filters currently applied — the one description of "what is on screen"
+ * that both the page request and the export use. A displaced account has no
+ * family filter (its list is already just its own family's).
+ */
+function currentFilters(session) {
+  return {
+    query: state.q,
+    type: state.type,
+    organizationId: state.organizationId,
+    familyId: session.role === ROLES.DISPLACED ? '' : state.familyId,
+  };
+}
+
 async function load(session) {
   const target = qs('#results');
   if (!target) return;
+  const seq = ++loadSeq;
   target.innerHTML = skeletonTable(6);
 
   try {
-    const rows = await store.load(() => collect(session));
-    target.innerHTML = resultsView(session, rows);
+    const filters = currentFilters(session);
+    let result = await store.load(() => listAidPage(filters, { page: state.page }));
+    if (seq !== loadSeq) return;
+
+    // A page past the end (stale ?page= or rows just deleted) shows the last
+    // page, as the client-side slicer always did.
+    const pages = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
+    if (result.total > 0 && state.page > pages) {
+      state.page = pages;
+      result = await listAidPage(filters, { page: pages });
+      if (seq !== loadSeq) return;
+    }
+
+    target.innerHTML = resultsView(session, result);
     const summary = qs('#summary');
-    if (summary) summary.innerHTML = summaryView(rows);
+    if (summary) summary.innerHTML = summaryView(result);
   } catch (error) {
+    if (seq !== loadSeq) return;
     console.error(error);
     target.innerHTML = errorState({ retryAttrs: 'data-retry' });
     delegate(target, 'click', '[data-retry]', () => load(session));
   }
-}
-
-/** Fully real for all three roles — RLS scopes each read on its own
- *  (own camp for Camp Admin, own family for Displaced, everything for
- *  Super Admin); matchesAidFilters() applies the same client-side filter
- *  set to whichever rows come back. */
-async function collect(session) {
-  if (session.role === ROLES.CAMP_ADMIN) {
-    const rows = await getCampAidDistributions(session.campId);
-    return rows.filter((row) =>
-      matchesAidFilters(row, {
-        query: state.q,
-        type: state.type,
-        organizationId: state.organizationId,
-        familyId: state.familyId,
-      })
-    );
-  }
-
-  if (session.role === ROLES.DISPLACED) {
-    if (!ownFamily) return [];
-    const rows = await getFamilyAidDistributions(ownFamily._dbId);
-    return rows.filter((row) =>
-      matchesAidFilters(row, { query: state.q, type: state.type, organizationId: state.organizationId })
-    );
-  }
-
-  const rows = await getAllAidDistributions();
-  return rows.filter((row) =>
-    matchesAidFilters(row, {
-      query: state.q,
-      type: state.type,
-      organizationId: state.organizationId,
-      familyId: state.familyId,
-    })
-  );
 }
 
 /* ---- Excel export --------------------------------------------------------- */
@@ -304,7 +296,7 @@ async function exportRows(session, trigger) {
   trigger.innerHTML = `<span class="btn__spinner"></span><span>جارٍ تجهيز ملف Excel…</span>`;
 
   try {
-    const rows = await store.load(() => collect(session), 120);
+    const rows = await store.load(() => listAllAid(currentFilters(session)), 120);
 
     if (!rows.length) {
       toast.error('لا توجد نتائج لتصديرها', 'عدّل الفلاتر ثم حاول مرة أخرى.');
@@ -329,28 +321,23 @@ async function exportRows(session, trigger) {
   }
 }
 
-function summaryView(rows) {
-  const organizations = new Set(rows.map((record) => record.organizationId)).size;
-  const types = new Set(rows.flatMap((record) => record.types || [])).size;
-  const families = new Set(rows.flatMap((record) => record.familyIds || [])).size;
-
+/** The four cards describe the WHOLE filtered set, so they come from the database's `summary`, not the page. */
+function summaryView({ total, summary }) {
   return `
     <div class="grid grid--4 u-mb-5">
-      ${statCard({ label: 'عدد المساعدات', value: formatNumber(rows.length), iconName: 'aid' })}
-      ${statCard({ label: 'الجهات المانحة', value: formatNumber(organizations), iconName: 'building', tone: 'success' })}
-      ${statCard({ label: 'الأسر المستفيدة', value: formatNumber(families), iconName: 'family' })}
-      ${statCard({ label: 'أنواع المساعدات', value: formatNumber(types), iconName: 'chart', tone: 'warning' })}
+      ${statCard({ label: 'عدد المساعدات', value: formatNumber(total), iconName: 'aid' })}
+      ${statCard({ label: 'الجهات المانحة', value: formatNumber(summary.organizations), iconName: 'building', tone: 'success' })}
+      ${statCard({ label: 'الأسر المستفيدة', value: formatNumber(summary.families), iconName: 'family' })}
+      ${statCard({ label: 'أنواع المساعدات', value: formatNumber(summary.types), iconName: 'chart', tone: 'warning' })}
     </div>`;
 }
 
-function resultsView(session, rows) {
-  if (!rows.length) return emptyView(session);
+function resultsView(session, { rows: slice, total }) {
+  if (!total) return emptyView(session);
 
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const page = Math.min(state.page, pages);
-  const slice = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const page = state.page;
 
-  if (session.role === ROLES.DISPLACED) return ownHistoryView(rows, slice, page);
+  if (session.role === ROLES.DISPLACED) return ownHistoryView(total, slice, page);
 
   const isSuper = session.role === ROLES.SUPER_ADMIN;
 
@@ -392,12 +379,12 @@ function resultsView(session, rows) {
   ];
 
   return `
-    ${resultBar({ count: slice.length, total: rows.length, noun: 'مساعدة' })}
+    ${resultBar({ count: slice.length, total, noun: 'مساعدة' })}
     ${dataTable({
       columns,
       rows: slice,
       caption: 'سجل المساعدات',
-      foot: rows.length > PAGE_SIZE ? pagination({ page, pageSize: PAGE_SIZE, total: rows.length }) : '',
+      foot: total > PAGE_SIZE ? pagination({ page, pageSize: PAGE_SIZE, total }) : '',
     })}`;
 }
 
@@ -406,7 +393,7 @@ function resultsView(session, rows) {
  * received. No per-record detail screen, no row actions — everything worth
  * knowing about a delivery is already on the card.
  */
-function ownHistoryView(rows, slice, page) {
+function ownHistoryView(total, slice, page) {
   const cards = slice
     .map(
       (record) => `
@@ -426,9 +413,9 @@ function ownHistoryView(rows, slice, page) {
     .join('');
 
   return `
-    ${resultBar({ count: slice.length, total: rows.length, noun: 'مساعدة' })}
+    ${resultBar({ count: slice.length, total, noun: 'مساعدة' })}
     <ul class="stack" style="list-style:none;margin:0;padding:0">${cards}</ul>
-    ${rows.length > PAGE_SIZE ? pagination({ page, pageSize: PAGE_SIZE, total: rows.length }) : ''}`;
+    ${total > PAGE_SIZE ? pagination({ page, pageSize: PAGE_SIZE, total }) : ''}`;
 }
 
 function emptyView(session) {

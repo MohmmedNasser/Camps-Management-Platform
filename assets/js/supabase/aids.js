@@ -2,6 +2,7 @@
 import { requireClient } from '../core/supabase-client.js';
 import { run, mapError } from './errors.js';
 import { paginate, sort, fetchAll, fetchAllIn } from './query.js';
+import { mapAidDistributionRow, fetchAidPage, fetchAllAid } from './aid-filters.js';
 
 const DISTRIBUTION_ORDER = [['distributed_on', false], ['id', false]];
 
@@ -125,47 +126,17 @@ const DISTRIBUTION_SELECT =
   'created_by:profiles!aid_distributions_created_by_fkey(full_name)';
 
 /**
- * DB row -> the shape `select.aidRow()` already produces for the mock path,
- * so `aids.js`'s table/summary/export code needs no change to read either
- * one. Two beneficiary id spaces are kept side by side on purpose:
- * `familyIds` (reference codes, e.g. `FAM-000001`) is what the UI displays,
- * links to `family-details.html` with, and searches by; `familyDbIds`
- * (UUIDs) is what `create_aid_distribution`/`updateAidDistribution()` and
- * the real family multi-select's option `value`s actually are.
+ * One page of the filtered aid list — filtered, counted, summarised and paged
+ * by the database (Phase 4.25, `list_aid_distributions`). `{ rows, total,
+ * summary }`; RLS scopes the rows (all / own camp / own family).
  */
-function mapAidDistributionRow(row) {
-  const types = (row.aid_distribution_types || []).map((t) => t.aid_type?.code).filter(Boolean);
-  const typeLabels = (row.aid_distribution_types || [])
-    .map((t) => t.aid_type?.label_ar)
-    .filter(Boolean)
-    .join('، ');
-  const beneficiaries = (row.aid_distribution_families || []).map((link) => ({
-    familyId: link.family?.reference_code || '',
-    familyDbId: link.family?.id || '',
-    headName: link.family?.head?.full_name || '—',
-  }));
+export function listAidPage(filters, pagination) {
+  return fetchAidPage(requireClient(), filters, pagination);
+}
 
-  return {
-    id: row.id,
-    types,
-    typeLabels,
-    organizationId: row.organization?.id || '',
-    organizationName: row.organization?.name || '—',
-    familyIds: beneficiaries.map((b) => b.familyId),
-    familyDbIds: beneficiaries.map((b) => b.familyDbId),
-    beneficiaryCount: beneficiaries.length,
-    beneficiaries,
-    date: row.distributed_on,
-    campId: row.camp_id,
-    campName: row.camp?.name || '—',
-    allFamiliesSelected: row.all_families_selected,
-    createdAt: row.created_at,
-    createdByName: row.created_by?.full_name || '—',
-    donor: {
-      responsiblePerson: row.organization?.responsible_person || '',
-      phone: row.organization?.phone || '',
-    },
-  };
+/** The complete filtered set, batched — the Excel export path only. */
+export function listAllAid(filters) {
+  return fetchAllAid(requireClient(), filters);
 }
 
 /**

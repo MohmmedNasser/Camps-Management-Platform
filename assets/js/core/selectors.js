@@ -41,8 +41,17 @@ function matchesYesNo(value, fact) {
 
 /* ---- Age / child / orphan facts ------------------------------------------ */
 
-/** Age in whole years, or null when there is no usable birth date. */
+/**
+ * Age in whole years, or null when there is no usable birth date.
+ *
+ * Canonical rule: completed years as of the database's `current_date`
+ * (`public.age_in_years`). A row that came from a server-side list already
+ * carries that value as `ageYears`, and it wins, so a list's filters, badges
+ * and Excel column can never disagree. Rows from anywhere else fall back to
+ * the same rule evaluated against the browser's date.
+ */
 export function ageOf(person) {
+  if (person && person.ageYears !== undefined) return person.ageYears;
   return ageFrom(person && person.birthDate);
 }
 

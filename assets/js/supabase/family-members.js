@@ -2,6 +2,7 @@
 import { requireClient } from '../core/supabase-client.js';
 import { run, mapError, DataAccessError, ErrorType } from './errors.js';
 import { paginate, sort, fetchAll, fetchAllIn } from './query.js';
+import { mapDisplacedRow, fetchDisplacedPage, fetchAllDisplaced } from './displaced-filters.js';
 
 const SORT_COLUMNS = ['created_at', 'full_name', 'birth_date'];
 
@@ -59,55 +60,6 @@ export function isDuplicateNationalId(error) {
   return error instanceof DataAccessError && error.type === ErrorType.DUPLICATE;
 }
 
-/**
- * A displaced person's full record, mapped snake_case DB -> camelCase UI —
- * the shape `displacedFields()`, `personFacts()`, the detail-tab renderers
- * and `displacedExportRow()` already read. `family_members` IS the
- * displaced-person table (BACKEND.md §2); `family.reference_code` becomes
- * `familyId`/`familyLabel`, matching the mock's convention of storing the
- * family's human-readable id directly on the person row (Phase 4.5 spec §5.1).
- */
-function mapDisplacedRow(row) {
-  return {
-    id: row.id,
-    campId: row.camp_id,
-    campName: row.camp?.name || '—',
-    familyId: row.family?.reference_code || '',
-    familyLabel: row.family?.reference_code || '—',
-    fullName: row.full_name,
-    fullNameEn: row.full_name_en || '',
-    nationalId: row.national_id,
-    gender: row.gender,
-    birthDate: row.birth_date,
-    maritalStatus: row.marital_status,
-    nationality: row.nationality,
-    passportNumber: row.passport_number || '',
-    unrwaNumber: row.unrwa_number || '',
-    phone: row.phone || '',
-    altPhone: row.alt_phone || '',
-    email: row.email || '',
-    governorate: row.governorate,
-    city: row.city || '',
-    area: row.area || '',
-    tentType: row.tent_type,
-    originGovernorate: row.origin_governorate,
-    originCity: row.origin_city || '',
-    displacementDate: row.displacement_date,
-    chronicDiseases: row.chronic_diseases || '',
-    disability: row.disability || '',
-    fatherStatus: row.father_status,
-    motherStatus: row.mother_status,
-    isPregnant: row.is_pregnant,
-    isBreastfeeding: row.is_breastfeeding,
-    workStatus: row.work_status,
-    incomeSource: row.income_source,
-    monthlyIncome: Number(row.monthly_income) || 0,
-    relationship: row.relationship,
-    status: row.status,
-    createdAt: row.created_at,
-  };
-}
-
 const DISPLACED_SELECT =
   '*, family:families!family_members_family_id_fkey(reference_code), ' +
   'camp:camps!family_members_camp_id_fkey(name)';
@@ -138,6 +90,26 @@ export async function getCampDisplacedPersons(campId) {
     order: ['created_at', 'id'],
   });
   return rows.map(mapDisplacedRow);
+}
+
+/**
+ * One page of the filtered displaced-persons list, filtered, counted and paged
+ * by the database (Phase 4.25, `list_displaced_persons`). `{ rows, total }`;
+ * `pageSize: 0` returns just the count. RLS scopes the rows to the caller's
+ * camp (Camp Admin) or the whole platform (Super Admin) — `filters.campId` can
+ * only narrow.
+ */
+export function listDisplacedPage(filters, pagination) {
+  return fetchDisplacedPage(requireClient(), filters, pagination);
+}
+
+export async function countDisplaced(filters) {
+  return (await fetchDisplacedPage(requireClient(), filters, { pageSize: 0 })).total;
+}
+
+/** The complete filtered set, batched — the Excel export path only. */
+export function listAllDisplaced(filters) {
+  return fetchAllDisplaced(requireClient(), filters);
 }
 
 /**
