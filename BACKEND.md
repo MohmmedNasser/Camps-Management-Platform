@@ -12,23 +12,23 @@ Backend foundation for the Displaced Camps Management Platform — Supabase, Pos
 supabase/
   config.toml                            CLI project config (from `supabase init`)
   migrations/
-    20260816120000_initial_schema.sql    enums, 14 tables, constraints, indexes
-    20260816120100_functions_and_triggers.sql
+    20260816132221_initial_schema.sql    enums, 14 tables, constraints, indexes
+    20260816132428_functions_and_triggers.sql
                                          authorization helpers, triggers, derived
                                          views, transactional workflow functions
-    20260816120200_rls_policies.sql      grants + RLS + 52 policies
-    20260816120300_reference_data.sql    aid types (production reference data)
-    20260816120400_harden_preexisting_objects.sql
+    20260816132602_rls_policies.sql      grants + RLS + 52 policies
+    20260816132616_reference_data.sql    aid types (production reference data)
+    20260816132632_harden_preexisting_objects.sql
                                          revokes the RPC surface on the
                                          project's own rls_auto_enable()
-    20260817000000_fix_function_default_privileges.sql
+    20260817072810_fix_function_default_privileges.sql
                                          closes a second legacy default-
                                          privilege leak, on functions (§7)
-    20260817000100_enforce_function_execute_baseline.sql
+    20260817073603_enforce_function_execute_baseline.sql
                                          event trigger: strips the PUBLIC
                                          EXECUTE grant Postgres auto-applies
                                          to every new function (§7)
-    20260817000200_close_private_schema_public_execute.sql
+    20260817073944_close_private_schema_public_execute.sql
                                          extends the same fix to `private`
   seed/seed.mjs                          development seed (Admin API + Data API)
   scripts/write-frontend-config.mjs      writes the browser config from .env
@@ -258,9 +258,9 @@ A follow-up audit — run specifically because the table/sequence default-privil
 
 **The fix, in three migrations:**
 
-- `20260817000000_fix_function_default_privileges.sql` — `alter default privileges in schema public revoke all on functions from public, anon, authenticated;` plus explicit per-function revokes on the five functions that already existed (the `ALTER` only prevents *future* leaks).
-- `20260817000100_enforce_function_execute_baseline.sql` — because layer 2 above cannot be closed by `ALTER DEFAULT PRIVILEGES` alone, this adds an event trigger, `enforce_function_no_public_execute`, that fires on `ddl_command_end` for `CREATE FUNCTION` and revokes `PUBLIC`'s grant the instant a function is created — the same pattern this Supabase instance already uses for `ensure_rls` (§5). It revokes **only** from `PUBLIC`, never from `anon`/`authenticated` directly, so it cannot undo an explicit grant a migration makes in a later statement, and is a no-op on `CREATE OR REPLACE FUNCTION` redeploys of an already-fixed function (verified: a function created, granted to `authenticated`, then redeployed via `CREATE OR REPLACE`, keeps its `authenticated` grant and gains no `PUBLIC` grant).
-- `20260817000200_close_private_schema_public_execute.sql` — the same layer-2 leak existed on all 20 pre-existing `private` schema functions (the identity/authorization primitives every RLS policy calls). Not independently reachable — `anon` has no `USAGE` on `private`, confirmed live, so calling one returns `permission denied for schema private` before the function-level grant is ever consulted — but closed anyway as defense in depth, and the event trigger above was widened to cover `private` too.
+- `20260817072810_fix_function_default_privileges.sql` — `alter default privileges in schema public revoke all on functions from public, anon, authenticated;` plus explicit per-function revokes on the five functions that already existed (the `ALTER` only prevents *future* leaks).
+- `20260817073603_enforce_function_execute_baseline.sql` — because layer 2 above cannot be closed by `ALTER DEFAULT PRIVILEGES` alone, this adds an event trigger, `enforce_function_no_public_execute`, that fires on `ddl_command_end` for `CREATE FUNCTION` and revokes `PUBLIC`'s grant the instant a function is created — the same pattern this Supabase instance already uses for `ensure_rls` (§5). It revokes **only** from `PUBLIC`, never from `anon`/`authenticated` directly, so it cannot undo an explicit grant a migration makes in a later statement, and is a no-op on `CREATE OR REPLACE FUNCTION` redeploys of an already-fixed function (verified: a function created, granted to `authenticated`, then redeployed via `CREATE OR REPLACE`, keeps its `authenticated` grant and gains no `PUBLIC` grant).
+- `20260817073944_close_private_schema_public_execute.sql` — the same layer-2 leak existed on all 20 pre-existing `private` schema functions (the identity/authorization primitives every RLS policy calls). Not independently reachable — `anon` has no `USAGE` on `private`, confirmed live, so calling one returns `permission denied for schema private` before the function-level grant is ever consulted — but closed anyway as defense in depth, and the event trigger above was widened to cover `private` too.
 
 **End state, verified against the live project (catalog checks plus real HTTP calls with the publishable key):**
 
@@ -530,11 +530,11 @@ Before writing any of this, the live project (`qlvftlecwoqmvtagaykr`) was inspec
 
 | Migration | Adds |
 |---|---|
-| `20260817090000_phase2_search_indexes.sql` | `pg_trgm`, GIN trigram index on `family_members.full_name` and `organizations.name`, pattern-ops index on `families.reference_code` |
-| `20260817090100_phase2_add_family_member.sql` | `public.add_family_member(family_id, member jsonb)` — adds a person to an *existing* family; the one-form create (`create_family_with_members`) already covers a brand-new family |
-| `20260817090200_phase2_statistics.sql` | `public.get_family_statistics(camp_id)`, `public.get_dashboard_statistics(camp_id)` — `SECURITY INVOKER`, RLS-scoped, with an explicit role check on top (displaced denied outright, Camp Admin locked to their own camp) |
-| `20260817090250_phase2_move_pgtrgm_to_extensions_schema.sql` | Moves `pg_trgm` into the `extensions` schema (creating it first if absent) — the prior migration installed it without a target schema, which defaulted it into `public` and tripped the `extension_in_public` security advisory |
-| `20260817090300_phase2_fix_family_statistics_join.sql` | Fixes a bug in `get_family_statistics` caught by the test suite before it shipped anywhere else: it joined `family_member_facts` on `mf.id`, but the view's member-identifier column is `member_id` (`family_members.id AS member_id`), not `id` |
+| `20260817081403_phase2_search_indexes.sql` | `pg_trgm`, GIN trigram index on `family_members.full_name` and `organizations.name`, pattern-ops index on `families.reference_code` |
+| `20260817081437_phase2_add_family_member.sql` | `public.add_family_member(family_id, member jsonb)` — adds a person to an *existing* family; the one-form create (`create_family_with_members`) already covers a brand-new family |
+| `20260817081527_phase2_statistics.sql` | `public.get_family_statistics(camp_id)`, `public.get_dashboard_statistics(camp_id)` — `SECURITY INVOKER`, RLS-scoped, with an explicit role check on top (displaced denied outright, Camp Admin locked to their own camp) |
+| `20260817090719_phase2_move_pgtrgm_to_extensions_schema_v2.sql` | Moves `pg_trgm` into the `extensions` schema (creating it first if absent) — the prior migration installed it without a target schema, which defaulted it into `public` and tripped the `extension_in_public` security advisory |
+| `20260817082404_phase2_fix_family_statistics_join.sql` | Fixes a bug in `get_family_statistics` caught by the test suite before it shipped anywhere else: it joined `family_member_facts` on `mf.id`, but the view's member-identifier column is `member_id` (`family_members.id AS member_id`), not `id` |
 
 Two of the five migrations above are same-day corrections to migrations earlier in the same list — both bugs were caught by the test suite (§ below) before being relied on by any JS module, and both are documented here rather than silently squashed, matching this file's own convention of narrating what actually happened over what was intended.
 
@@ -641,7 +641,7 @@ One centralized `MAX_FILE_SIZE` (5 MB, matching the number already shown in `ui/
 
 ### 16.4 · Migration
 
-One new migration, `20260817200000_phase3_document_privilege_guard.sql` — verified first that Phase 1's `documents_has_owner` and `documents_cloudinary_complete` CHECK constraints and every FK index already existed, so nothing redundant was added. What Phase 1 left open: RLS decides which **rows** may be updated, not which **columns** (§7 "Beyond RLS") — `documents_update_admin` lets an admin edit a document's `name`/`category`, but nothing stopped that same UPDATE from also reassigning `family_id`, `camp_id`, or the Cloudinary identity columns, which spec §20 requires be effectively immutable. `private.guard_document_privileges()`, a `BEFORE UPDATE` trigger following the exact pattern of `guard_profile_privileges()`/`guard_notification_update()`, closes that: only `name` and `category` may change via plain UPDATE; ownership and Cloudinary-identity columns raise `42501`. Skips the check for trusted server contexts via the existing `private.is_browser_session()`.
+One new migration, `20260817094808_phase3_document_privilege_guard.sql` — verified first that Phase 1's `documents_has_owner` and `documents_cloudinary_complete` CHECK constraints and every FK index already existed, so nothing redundant was added. What Phase 1 left open: RLS decides which **rows** may be updated, not which **columns** (§7 "Beyond RLS") — `documents_update_admin` lets an admin edit a document's `name`/`category`, but nothing stopped that same UPDATE from also reassigning `family_id`, `camp_id`, or the Cloudinary identity columns, which spec §20 requires be effectively immutable. `private.guard_document_privileges()`, a `BEFORE UPDATE` trigger following the exact pattern of `guard_profile_privileges()`/`guard_notification_update()`, closes that: only `name` and `category` may change via plain UPDATE; ownership and Cloudinary-identity columns raise `42501`. Skips the check for trusted server contexts via the existing `private.is_browser_session()`.
 
 ### 16.5 · Frontend
 
@@ -1298,7 +1298,7 @@ the same end-state Phase 4.9 reached for `organizations.html`.
   `42501` for anyone else, is the one safe way to list camp admins with
   their login email. Same shape as every other privileged RPC in this
   project (`get_dashboard_statistics`, `approve_registration_request`, …).
-  Migration: `supabase/migrations/20260819000000_phase4_10_camp_admin_accounts.sql`.
+  Migration: `supabase/migrations/20260924074142_phase4_10_camp_admin_accounts_fix_email_cast.sql`.
   `get_advisors` confirms exactly one new, expected
   `authenticated_security_definer_function_executable` WARN (6 total, up
   from 5) — no other finding, before or after.
@@ -2098,7 +2098,7 @@ fields, token design, the SQL/Edge-Function split) lives there; this section
 covers what shipped.
 
 - **New table: `private.family_activation_tokens`** (migration
-  `20260927000000_phase4_17_family_activation.sql`) — in `private`, not
+  `20260927123813_phase4_17_family_activation.sql`) — in `private`, not
   `public`, so it is structurally unreachable via PostgREST regardless of
   any future `GRANT` (the schema isn't in `supabase/config.toml`'s
   `api.schemas`), stronger than "public table + RLS with no policies."
@@ -2249,7 +2249,7 @@ covers what shipped.
   `generate_family_activation_token`'s original TTL floor (60 seconds)
   silently overrode the test's requested 1-second expiry, which briefly
   created one real, unintended test account before the floor was lowered
-  to 1 second (migration `20260927000100_phase4_17_activation_ttl_param.sql`)
+  to 1 second (migration `20260927124814_phase4_17_activation_ttl_param.sql`)
   — caught immediately because the next subtest then failed with
   `already_activated` instead of its expected success, not silently passed.
   The stray account was identified and removed via the Admin API before
@@ -2370,7 +2370,7 @@ Spec: `docs/superpowers/specs/2026-09-29-phase-4.23-pagination-scaling-design.md
 
 ## 36 · Phase 4.24 — Server-side family filtering & statistics aggregation
 
-Spec: `docs/superpowers/specs/2026-09-29-phase-4.24-server-side-filtering-aggregation-design.md` (decision matrix for every filter/statistic). Migration: `20260929010000_phase4_24_family_overview_statistics_report.sql`. Additive only — no RLS, index, Edge Function or existing-object change.
+Spec: `docs/superpowers/specs/2026-09-29-phase-4.24-server-side-filtering-aggregation-design.md` (decision matrix for every filter/statistic). Migration: `20260929121644_phase4_24_family_overview_statistics_report.sql`. Additive only — no RLS, index, Edge Function or existing-object change.
 
 **New objects (both run as the caller; no `SECURITY DEFINER`)**
 
@@ -2391,7 +2391,7 @@ Spec: `docs/superpowers/specs/2026-09-29-phase-4.24-server-side-filtering-aggreg
 
 ## 37 · Phase 4.25 — Server-side displaced-persons & aid lists
 
-Spec: `docs/superpowers/specs/2026-09-30-phase-4.25-displaced-aid-server-side-lists-design.md` (filter-equivalence matrices, measured performance). Migrations: `20260930000000_phase4_25_server_side_lists.sql`, `20260930000100_phase4_25_displaced_list_scale.sql`. No RLS, index, Edge Function or table change.
+Spec: `docs/superpowers/specs/2026-09-30-phase-4.25-displaced-aid-server-side-lists-design.md` (filter-equivalence matrices, measured performance). Migrations: `20260930072640_phase4_25_server_side_lists.sql`, `20260930080929_phase4_25_displaced_list_scale.sql`. No RLS, index, Edge Function or table change.
 
 **Why RPCs and not a view (unlike §36).** The list search is a literal substring (JS `includes`) over several columns; `ilike` needs wildcard escaping and PostgREST rewrites `*`, which §36 sidestepped by keeping results client-side — impossible once rows are paginated on the server. Aid type + donor must match the *same* distribution, aid search spans arrays of beneficiaries, and the aid page's summary cards aggregate over the whole filtered set. Two narrowly scoped functions express all of that exactly.
 
@@ -2420,3 +2420,27 @@ Spec: `docs/superpowers/specs/2026-09-30-phase-4.25-displaced-aid-server-side-li
 ## 38 · Phase 4.26 — Test data & notification cleanup
 
 Test-hygiene only; no schema, RLS, RPC, Edge Function or app change. The Phase 4.20 trigger writes notifications with no reference back to the distribution, so deleting a test's distribution left them behind (the 4.6 UI round trip leaked 3 per run; count drifted to 28). `tests/helpers/aid-fixture-cleanup.mjs` snapshots ids before the fixture and, in `finally`, deletes only new rows carrying the trigger's title+href signature (plus new fixture-dated distributions), checking every error. Used by `phase4.6-aids-verification` and `phase4.25-aid-isolation`; proven by `phase4.26-test-data-cleanup-verification`. 15 provably test-created notifications were removed once by exact id. Design: `docs/superpowers/specs/2026-09-30-phase-4.26-test-data-cleanup-design.md`.
+
+
+## 39 · Phase 4.27 — Migration history reconciliation
+
+**Result: repository aligned to the live history; the live database was not touched.** Not "fully reconciled" — one live version has no file, and some per-file texts differ permanently (below).
+
+**Drift found.** The live project recorded 31 migrations; the repo had 23 files, none with the same *version* as its live counterpart (files carried nominal timestamps like `20260816120000`, the project recorded apply time, e.g. `20260816132221`). The Supabase CLI matches by version, so `db push` would have treated everything as unapplied/unknown. Eight live entries had no file: three temporary probes (`temp_verify_session_binding`, `_v2`, `drop_…` — net zero), four follow-up fixes already folded into local files (`…public_role`, `phase4_10…`, `phase4_17…fix_floor`, `phase4_25…page_only_json`) and `phase2_move_pgtrgm…` (v1, superseded by `_v2`).
+
+**Evidence (all read-only).** A schema fingerprint of `public`/`private` (columns, tables+RLS flags, constraints, indexes, policies, function bodies/ACL/security mode/`search_path`, table ACLs, triggers, views, enums) was compared between the live project and a PGlite replay of the migrations. Identical: columns, constraints, policies, tables, triggers, views, enum types. Residual differences were all non-schema: platform `service_role` default grants, the platform function `rls_auto_enable()`, trigram-opclass rendering (`gin_trgm_ops` vs `extensions.gin_trgm_ops`), and comment-only lines in two function bodies (with those stripped all 46 function bodies hash identically). Two live changes were found that **no recorded migration explains** — the `user_preferences_update_own` policy and the `is_orphan()` ACL — both already present in the local files (applied live as development-time SQL).
+
+**What changed.**
+- 23 files `git mv`'d to their live `version_name` (100 % rename similarity, **no content edits**).
+- 7 live-only entries added verbatim under their live version and name (each verified byte-exact against the live `md5`): the three probes, `…072946`, `…073414`, `…125425`, `…080411`. Replay is idempotent for all of them.
+- `BACKEND.md` file citations updated; dated plans/specs keep the old names (old→new map: design doc §3).
+- Result: 30 files; every one has the version of a live entry; 30 of 31 live versions have a file.
+
+**Deliberately not done.** No `migration repair` (would rewrite/delete live history rows), no `db push`/`db reset`, no DDL/DML of any kind on live; no SQL edited to match live; no corrective migration (no real change needed); no application, RLS, grant, RPC, trigger, view, index or Edge Function change.
+
+**Remaining historical limitations.**
+1. `20260817081611_phase2_move_pgtrgm_to_extensions_schema` (body: `alter extension pg_trgm set schema extensions;`) has no file: it only ran live because Supabase pre-creates the `extensions` schema, and replayed verbatim on bare Postgres (the PGlite harnesses) it fails with `schema "extensions" does not exist`. Its effect is contained in `…090719_…_v2`. The CLI will report this one version as remote-only.
+2. Text differs from the recorded live statements, permanently, for `rls_policies`, `fix_function_default_privileges`, `enforce_function_execute_baseline`, `phase4_17_activation_ttl_param` and `orphan_rule_and_request_demographics` (folded fixes / statements applied live outside history). The CLI compares versions, not content. The `phase4_10` file content equals the later `_fix_email_cast` entry, so it carries that name.
+3. The live history keeps the three probe entries.
+
+**Verification.** Replay fingerprint of the 30-file set equals the old 23-file set (all 11 kinds); live fingerprint and row counts before/after identical (auth.users 14, profiles 14, families 16, family_members 39, aid_distributions 17, documents 14, registration_requests 7, messages 7, notifications 13, organizations 7, camps 4, activation tokens 3; history 31). `npm run test:all`: baseline **52 suites, 717/717**, after **52 suites, 717/717**, 0 failed, 0 skipped, exit 0 both times (covers RLS, per-role isolation, anonymous access, RPC grants, family activation, and the Playwright flows). Design: `docs/superpowers/specs/2026-09-30-phase-4.27-migration-history-reconciliation-design.md`; plan: `docs/superpowers/plans/2026-09-30-phase-4.27-migration-history-reconciliation.md`.

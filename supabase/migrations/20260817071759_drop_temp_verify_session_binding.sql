@@ -1,0 +1,1 @@
+drop function if exists public.__verify_session_binding();
