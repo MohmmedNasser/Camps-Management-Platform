@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
+import { snapshotAidState, cleanupAidFixture } from './helpers/aid-fixture-cleanup.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '../..');
@@ -298,6 +299,10 @@ test('Phase 4.6 Camp Admin aid: rendered list, filters, details and export match
       const dbClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
       await dbClient.auth.signInWithPassword({ email: 'admin@camps.ps', password: PASSWORD });
 
+      // Creating an aid distribution fires the Phase 4.20 notification trigger, and deleting the
+      // distribution leaves those notifications behind — so snapshot first and clean up by diff.
+      const service = createClient(required('SUPABASE_URL'), required('SUPABASE_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY'));
+      const snapshot = await snapshotAidState(service);
       const page = await browser.newPage();
       let createdId = null;
 
@@ -352,12 +357,14 @@ test('Phase 4.6 Camp Admin aid: rendered list, filters, details and export match
         createdId = null; // already gone — nothing left for the finally block to clean up
       } finally {
         await page.close();
-        // Only reached if an assertion above threw before the delete step ran.
-        if (createdId) {
-          await dbClient.from('aid_distributions').delete().eq('id', createdId);
-        }
         await dbClient.auth.signOut();
+        // Runs on success and failure: removes the distribution if the UI delete never ran (or the
+        // id was never captured), plus every notification the trigger generated for it.
+        await cleanupAidFixture(service, snapshot, { fixtureDates: ['2026-01-15', '2026-02-20'] });
       }
+      const after = await snapshotAidState(service);
+      assert.deepEqual([...after.notificationIds].sort(), [...snapshot.notificationIds].sort(), 'notification set restored exactly');
+      assert.deepEqual([...after.distributionIds].sort(), [...snapshot.distributionIds].sort(), 'distribution set restored exactly');
     });
 
     await t.test('a search with no matches renders the real empty state, not a blank panel', async () => {

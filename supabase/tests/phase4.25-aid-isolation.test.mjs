@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
+import { snapshotAidState, cleanupAidFixture } from './helpers/aid-fixture-cleanup.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '../..');
@@ -155,7 +156,7 @@ test('Phase 4.25 aid-list isolation', async (t) => {
     assert.ok(otherFamily, 'a second family in the same camp');
     const { data: org } = await service.from('organizations').select('id').limit(1).single();
     const { data: before } = await service.from('notifications').select('id, is_read');
-    const knownNotifications = new Set(before.map((n) => n.id));
+    const snapshot = await snapshotAidState(service);
     let distributionId = null;
     try {
       const created = await admin.client.rpc('create_aid_distribution', {
@@ -189,11 +190,8 @@ test('Phase 4.25 aid-list isolation', async (t) => {
         assert.equal((await fetchAidPage(viewer.client, filters, { pageSize: 50 })).total, 0, `leak via ${JSON.stringify(filters)}`);
       }
     } finally {
-      if (distributionId) await service.from('aid_distributions').delete().eq('id', distributionId);
-      // create_aid_distribution fires the Phase 4.20 notification trigger; remove exactly what it added.
-      const { data: after } = await service.from('notifications').select('id');
-      const added = after.filter((n) => !knownNotifications.has(n.id)).map((n) => n.id);
-      if (added.length) await service.from('notifications').delete().in('id', added);
+      // create_aid_distribution fires the Phase 4.20 notification trigger; remove the distribution and exactly what it added.
+      await cleanupAidFixture(service, snapshot, { fixtureDates: ['2026-01-15'] });
     }
     const { count: leftover } = await service.from('aid_distributions').select('id', { count: 'exact', head: true }).eq('id', distributionId ?? '00000000-0000-0000-0000-000000000000');
     assert.equal(leftover, 0, 'fixture distribution removed');
