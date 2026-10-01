@@ -2444,3 +2444,27 @@ Test-hygiene only; no schema, RLS, RPC, Edge Function or app change. The Phase 4
 3. The live history keeps the three probe entries.
 
 **Verification.** Replay fingerprint of the 30-file set equals the old 23-file set (all 11 kinds); live fingerprint and row counts before/after identical (auth.users 14, profiles 14, families 16, family_members 39, aid_distributions 17, documents 14, registration_requests 7, messages 7, notifications 13, organizations 7, camps 4, activation tokens 3; history 31). `npm run test:all`: baseline **52 suites, 717/717**, after **52 suites, 717/717**, 0 failed, 0 skipped, exit 0 both times (covers RLS, per-role isolation, anonymous access, RPC grants, family activation, and the Playwright flows). Design: `docs/superpowers/specs/2026-09-30-phase-4.27-migration-history-reconciliation-design.md`; plan: `docs/superpowers/plans/2026-09-30-phase-4.27-migration-history-reconciliation.md`.
+
+## 40 · Phase 4.28 — Migration history: the one intentional remote-only migration
+
+**Result: Option B — documentation only. No migration repair was performed and no live database change was made.**
+
+**Final state.** Local migration files: **30**. Live migration history rows: **31**. Remote-only: `20260817081611_phase2_move_pgtrgm_to_extensions_schema`. Local-only: none.
+
+**Why it is remote-only.** Its whole body is `alter extension pg_trgm set schema extensions;`. It was applied successfully to the live project because Supabase pre-creates the `extensions` schema. On bare Postgres/PGlite (the `schema.test.mjs`, `phase2-business-logic.test.mjs`, `phase4.25-age-rule.test.mjs` harnesses) it fails with `schema "extensions" does not exist`. `…090719_phase2_move_pgtrgm_to_extensions_schema_v2` runs `create schema if not exists extensions; alter extension pg_trgm set schema extensions;`, which works in both situations, so `_v2` supersedes it for clean replay. No later migration depends on `pg_trgm`'s schema.
+
+**Replay evidence (PGlite, `pg_trgm` created first).** Original alone: fails, `pg_trgm` stays in `public`. `_v2` alone: succeeds, `pg_trgm` in `extensions`. Original then `_v2`: original fails, `_v2` succeeds, final schema `extensions`. The old migration is not needed for the final state.
+
+**Why not `supabase migration repair --status reverted 20260817081611 --linked`.** The migration was genuinely applied and its effect persists, so "reverted" would be false; repair only deletes a row from `supabase_migrations.schema_migrations` and does not undo anything, trading historical accuracy for a cosmetic count match; it brings no application benefit (database work goes through the Supabase MCP, the CLI is not linked, `_v2` already supersedes it). Adding the file locally is worse: verbatim breaks clean replay, a guarded copy no longer represents the applied SQL.
+
+**Rule for future developers.** Do **not** add this migration verbatim, as a modified copy, or as a placeholder/empty/compat/renamed file, and do not mark it reverted without an explicit future migration-history decision.
+
+**CLI limitation.** With 30 local files vs 31 live rows the CLI reports `20260817081611` as remote-only; `db push`/`db pull` will refuse until that exception is handled deliberately (the CLI is currently not linked to the project).
+
+**Live database impact.** None. Schema, data, migration history, RLS, RPCs and Edge Functions are unchanged; a live read-only re-check confirmed 31 history rows, `pg_trgm` in `extensions`, and the Phase 4.27 row counts (auth.users 14, profiles 14, families 16, family_members 39, aid_distributions 17, documents 14, registration_requests 7, messages 7, notifications 13, organizations 7, camps 4, activation tokens 3).
+
+**Remaining historical limitations (unchanged from §39).** (1) `20260817081611` remains remote-only. (2) Five local files contain later fixes folded into them versus the originally recorded live statements: `rls_policies`, `fix_function_default_privileges`, `enforce_function_execute_baseline`, `phase4_17_activation_ttl_param`, `orphan_rule_and_request_demographics`. (3) Two live changes were applied directly with no history entry: the `user_preferences_update_own` policy and the ACL on `is_orphan()`. (4) Three probe migrations remain in the live history.
+
+**Verification.** `npm run test:all`: 52 suites, 717 of 717 passed, 0 failed, 0 skipped, exit 0 (same as the Phase 4.27 baseline). Documentation-only diff; no secrets, SECURITY DEFINER, RLS, RPC or Edge Function change.
+
+Design: `docs/superpowers/specs/2026-10-01-phase-4.28-migration-history-reconciliation-design.md`; plan: `docs/superpowers/plans/2026-10-01-phase-4.28-migration-history-reconciliation.md`.
