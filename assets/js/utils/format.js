@@ -80,22 +80,22 @@ export function formatCurrency(value) {
 }
 
 export function formatAge(birthDate) {
-  const date = toDate(birthDate);
-  if (!date) return '—';
-  const now = new Date();
-  let age = now.getFullYear() - date.getFullYear();
-  const monthDiff = now.getMonth() - date.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < date.getDate())) age -= 1;
-  return `${age} سنة`;
+  const age = ageFrom(birthDate);
+  return age === null ? '—' : `${age} سنة`;
 }
 
-export function ageFrom(birthDate) {
+/**
+ * Age in completed years as of the UTC calendar day — the same rule as the database's
+ * `public.age_in_years` (`current_date`, server timezone UTC). Both the birth date (a `YYYY-MM-DD`
+ * string parses as UTC midnight) and "today" are read through UTC getters, so the answer never
+ * depends on the browser's timezone. `now` is injectable for tests. See BACKEND.md Phase 4.29.
+ */
+export function ageFrom(birthDate, now = new Date()) {
   const date = toDate(birthDate);
   if (!date) return null;
-  const now = new Date();
-  let age = now.getFullYear() - date.getFullYear();
-  const monthDiff = now.getMonth() - date.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < date.getDate())) age -= 1;
+  let age = now.getUTCFullYear() - date.getUTCFullYear();
+  const monthDiff = now.getUTCMonth() - date.getUTCMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getUTCDate() < date.getUTCDate())) age -= 1;
   return age;
 }
 

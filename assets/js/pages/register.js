@@ -7,7 +7,7 @@
  */
 
 import { qs, ready } from '../utils/dom.js';
-import { rules } from '../utils/validators.js';
+import { rules, PASSWORD_MIN_LENGTH } from '../utils/validators.js';
 import { authLayout } from '../ui/auth-layout.js';
 import { inputField, selectField, passwordField, checkboxField, bindForm, setFieldError } from '../ui/form.js';
 import { button, alert } from '../ui/components.js';
@@ -100,7 +100,7 @@ async function render() {
                 placeholder: 'اختر المخيم',
                 full: true,
               })}
-              ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, hint: '6 أحرف على الأقل.' })}
+              ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, hint: `${PASSWORD_MIN_LENGTH} أحرف على الأقل.` })}
               ${passwordField({ name: 'passwordConfirm', label: 'تأكيد كلمة المرور', required: true })}
             </div>
 
@@ -131,7 +131,7 @@ async function render() {
       phone: [rules.required('رقم الجوال'), rules.phone('رقم الجوال')],
       email: [rules.required('البريد الإلكتروني'), rules.email()],
       campId: [rules.required('المخيم')],
-      password: [rules.required('كلمة المرور'), rules.password(6)],
+      password: [rules.required('كلمة المرور'), rules.password()],
       passwordConfirm: [
         rules.required('تأكيد كلمة المرور'),
         rules.matches('password', 'كلمتا المرور غير متطابقتين.'),

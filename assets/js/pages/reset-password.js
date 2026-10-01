@@ -5,7 +5,7 @@
  */
 
 import { qs, ready } from '../utils/dom.js';
-import { rules } from '../utils/validators.js';
+import { rules, PASSWORD_MIN_LENGTH } from '../utils/validators.js';
 import { authLayout } from '../ui/auth-layout.js';
 import { passwordField, bindForm } from '../ui/form.js';
 import { button, alert } from '../ui/components.js';
@@ -42,7 +42,7 @@ async function render() {
       <div class="card"><div class="card__body">
         <div id="reset-error" class="u-mb-4 u-hidden"></div>
         <form class="form" id="reset-form" novalidate autocomplete="off">
-          ${passwordField({ name: 'password', label: 'كلمة المرور الجديدة', required: true, hint: '6 أحرف على الأقل.' })}
+          ${passwordField({ name: 'password', label: 'كلمة المرور الجديدة', required: true, hint: `${PASSWORD_MIN_LENGTH} أحرف على الأقل.` })}
           ${passwordField({ name: 'passwordConfirm', label: 'تأكيد كلمة المرور', required: true })}
           ${button({ label: 'حفظ كلمة المرور', variant: 'primary', size: 'lg', block: true, type: 'submit' })}
         </form>
@@ -54,7 +54,7 @@ async function render() {
   const errorSlot = qs('#reset-error');
   bindForm(qs('#reset-form'), {
     schema: {
-      password: [rules.required('كلمة المرور'), rules.password(6)],
+      password: [rules.required('كلمة المرور'), rules.password()],
       passwordConfirm: [
         rules.required('تأكيد كلمة المرور'),
         rules.matches('password', 'كلمتا المرور غير متطابقتين.'),

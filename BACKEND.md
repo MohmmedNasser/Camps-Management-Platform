@@ -2468,3 +2468,29 @@ Test-hygiene only; no schema, RLS, RPC, Edge Function or app change. The Phase 4
 **Verification.** `npm run test:all`: 52 suites, 717 of 717 passed, 0 failed, 0 skipped, exit 0 (same as the Phase 4.27 baseline). Documentation-only diff; no secrets, SECURITY DEFINER, RLS, RPC or Edge Function change.
 
 Design: `docs/superpowers/specs/2026-10-01-phase-4.28-migration-history-reconciliation-design.md`; plan: `docs/superpowers/plans/2026-10-01-phase-4.28-migration-history-reconciliation.md`.
+
+## 41 · Phase 4.29 — Data integrity, test cleanup & security hardening
+
+**Result:** one application-level password floor, an explicit (unchanged) global sign-out, one age rule shared by browser and database, and a read-only investigation of the audit's data oddities. **No schema, RLS, RPC, migration-history or live-data change.** Two existing Edge Functions were redeployed (`activate-family-account` v2→v3, `admin-create-camp-admin` v2→v3, `verify_jwt` unchanged: false / true). Design: `docs/superpowers/specs/2026-10-01-phase-4.29-data-hardening-design.md`; plan: `docs/superpowers/plans/2026-10-01-phase-4.29-data-hardening.md`.
+
+**Aid-test notification cleanup.** Already fixed by Phase 4.26 (`tests/helpers/aid-fixture-cleanup.mjs`); the audit's "3 leaked per run" was stale. Re-proved: baseline `notifications` 13 (fingerprint `2f458527…`), 17 distributions → identical after the 12 suites that create aid. The two existing `تمت إضافة مساعدة جديدة` rows are seed content and were left alone.
+
+**Data anomalies (nothing modified).**
+- `ياسر الريس` pending profile (`yasser22@gmail.com`): a second signup 45 s after the real `yasser@gmail.com` account, never signed in, no request/member/family/documents/notifications. Kept: `phase4.25-displaced-isolation` and `-aid-isolation` use it as the pending-account fixture. The shape is explained by `register()` doing `signUp` then `createRegistrationRequest` with no rollback (unfixed, behaviour change).
+- `اختبار مهمة سبعة` (FAM-000010, camp النور): created by a camp admin through the UI on 2026-08-19, single-member, unreferenced, but counted by tests; left in place.
+- `رنا عصام قديح` (FAM-000009): seed data from an approved request that carried no gender; stored `male`, birth date null. A placeholder, not evidence; no value is inferred from the name.
+- Integrity checks all empty: orphan profiles/auth users/families, duplicate national ids, camp mismatches; 0 open activation tokens.
+
+**Password policy.** `PASSWORD_MIN_LENGTH = 8` (`assets/js/utils/validators.js`) drives `rules.password()`, the register / activation / reset / profile-change / camp-admin-create forms and their hints; both account-creating Edge Functions enforce 8 server-side. Existing accounts are unaffected (sign-in never checks length; `123456` demo logins still work). **Still open:** hosted Auth's `minimum_password_length` is 6 and leaked-password protection is off (advisor `auth_leaked_password_protection`) — both are dashboard/Management-API settings this environment cannot reach, so direct `supabase-js` `signUp`/`updateUser` calls can still set 6–7 characters. Set Authentication → Policies → minimum 8 (and leaked-password protection if the plan allows) in the dashboard.
+
+**Sign-out.** `signOut()` was implicitly global (supabase-js default). Decision: keep it, say so: `signOut({ scope: 'global' })` + comment. Reason: shared camp devices; signing out must lock a lost/borrowed phone too. Tests prove global revokes another session and local does not.
+
+**Statistics / age rule.** Authoritative rule: completed years as of the **UTC calendar day** = database `current_date` (DB timezone is UTC) = `age_in_years(dob[, on])`. The statistics report, list filters and `ageYears` already did this; `p_tz` only buckets *months*. The browser fallbacks `ageFrom`/`formatAge` (`utils/format.js`) used local date parts and could differ around midnight or mis-read a `YYYY-MM-DD` birth day west of UTC; they now use UTC parts through one function (`ageFrom(birthDate, now = new Date())`). A future birth date is invalid input and outside the rule.
+
+**Tests.** `phase4.29-hardening` (16): validator and live Edge Function 7-vs-8 boundary, existing logins, global vs local sign-out against the live Auth, `ageFrom` vs live `age_in_years` over birthday/leap/midnight pairs, identical results under five extreme `TZ` values, `get_statistics_report().stats.children` vs an independent count; mutation check against the old `ageFrom` fails 3 of them. `phase4.29-browser`: forms and detail pages at 320/375/414/768/1024/1280/1440, console/network/overflow, 7-vs-8 UI validation, logout.
+
+**Migration history.** Untouched (Phase 4.28 Option B stands: no repair, no `db push`/`reset`).
+
+**Unresolved.** Hosted Auth minimum/leak protection; the three data oddities above; the `register()` no-rollback gap; advisor `verify_family_activation` anon-executable (intentional since 4.17).
+
+**Final verification & residue.** `npm run test:all`: 54 suites, 739 of 739, 0 failed, 0 skipped. Secret scan of `assets/`, `pages/`: only comments mention `service_role`; no keys. Post-run baseline: notifications 13 (same fingerprint), aid distributions 17, families 16, profiles = auth users = 14, requests 7, 0 open activation tokens, 0 orphans / duplicate national ids / camp mismatches. **Residue:** interrupted concurrent runs (global sign-out makes simultaneous suites revoke each other) left 8 `وثيقة اختبار` documents (2026-10-01 10:35–10:47) and one `فرد للحذف 4.5` member (FAM-000009, 10:47:40) — members 40 vs 39, documents 22 vs 14. Not removed: the cleanup was not approved; documents must be deleted through `documents-delete` so their Cloudinary files are removed too. Rule: never run two suites at once.

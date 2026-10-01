@@ -6,6 +6,13 @@
  * after migration.
  */
 
+/**
+ * Minimum length for any password the app lets a user choose (sign-up, activation, reset, change).
+ * Enforced here and in the two account-creating Edge Functions; the hosted Auth minimum is a separate,
+ * dashboard-level setting (see BACKEND.md Phase 4.29). Existing passwords are never re-checked.
+ */
+export const PASSWORD_MIN_LENGTH = 8;
+
 export const rules = {
   required: (label = 'هذا الحقل') => (value) =>
     String(value ?? '').trim() ? '' : `${label} مطلوب.`,
@@ -37,7 +44,7 @@ export const rules = {
       : 'صيغة البريد الإلكتروني غير صحيحة.';
   },
 
-  password: (min = 6) => (value) => {
+  password: (min = PASSWORD_MIN_LENGTH) => (value) => {
     if (!value) return '';
     return String(value).length >= min ? '' : `كلمة المرور يجب ألا تقل عن ${min} أحرف.`;
   },

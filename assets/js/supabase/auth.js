@@ -20,9 +20,14 @@ export async function signUp({ email, password, fullName, phone }) {
   return data.user;
 }
 
+/**
+ * Signs out EVERY session of this account, not just this device (scope 'global' — also supabase-js's default,
+ * stated explicitly so it reads as a decision). Deliberate: camp devices are often shared, and a user who
+ * signs out on one phone expects a lost or borrowed phone to be locked out too. Phase 4.29, BACKEND.md.
+ */
 export async function signOut() {
   const client = requireClient();
-  const { error } = await client.auth.signOut();
+  const { error } = await client.auth.signOut({ scope: 'global' });
   if (error) throw mapAuthError(error);
 }
 

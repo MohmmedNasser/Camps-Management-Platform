@@ -9,7 +9,7 @@
  */
 
 import { qs, params, ready } from '../utils/dom.js';
-import { rules } from '../utils/validators.js';
+import { rules, PASSWORD_MIN_LENGTH } from '../utils/validators.js';
 import { authLayout } from '../ui/auth-layout.js';
 import { inputField, passwordField, bindForm, setFieldError } from '../ui/form.js';
 import { button, alert } from '../ui/components.js';
@@ -84,7 +84,7 @@ function render() {
               full: true,
               hint: 'سيُستخدم لتسجيل الدخول لاحقاً فقط — لن يُرسل إليه أي بريد.',
             })}
-            ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, hint: '6 أحرف على الأقل.', full: true })}
+            ${passwordField({ name: 'password', label: 'كلمة المرور', required: true, hint: `${PASSWORD_MIN_LENGTH} أحرف على الأقل.`, full: true })}
             ${passwordField({ name: 'passwordConfirm', label: 'تأكيد كلمة المرور', required: true, full: true })}
             ${button({ label: 'تفعيل الحساب', variant: 'primary', size: 'lg', block: true, type: 'submit' })}
           </form>
@@ -114,7 +114,7 @@ function render() {
       nationalId: [rules.required('رقم الهوية'), rules.nationalId()],
       birthDate: [rules.required('تاريخ الميلاد'), rules.pastDate('تاريخ الميلاد')],
       email: [rules.required('البريد الإلكتروني'), rules.email()],
-      password: [rules.required('كلمة المرور'), rules.password(6)],
+      password: [rules.required('كلمة المرور'), rules.password()],
       passwordConfirm: [
         rules.required('تأكيد كلمة المرور'),
         rules.matches('password', 'كلمتا المرور غير متطابقتين.'),

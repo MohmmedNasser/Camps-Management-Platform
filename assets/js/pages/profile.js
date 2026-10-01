@@ -33,7 +33,7 @@ import {
 import { inputField, passwordField, bindForm, setFieldError } from '../ui/form.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl } from '../core/router.js';
-import { rules } from '../utils/validators.js';
+import { rules, PASSWORD_MIN_LENGTH } from '../utils/validators.js';
 import * as store from '../core/store.js';
 import { getOwnProfile, updateOwnProfile } from '../supabase/profiles.js';
 import { getDisplacedPerson } from '../supabase/family-members.js';
@@ -167,7 +167,7 @@ function view(session, { user, person, family, aidCount, documentCount }) {
                   name: 'newPassword',
                   label: 'كلمة المرور الجديدة',
                   required: true,
-                  hint: '6 أحرف على الأقل.',
+                  hint: `${PASSWORD_MIN_LENGTH} أحرف على الأقل.`,
                 })}
                 ${passwordField({
                   name: 'confirmPassword',
@@ -307,7 +307,7 @@ function wire(content, session, { user }) {
   bindForm(passwordForm, {
     schema: {
       currentPassword: [rules.required('كلمة المرور الحالية')],
-      newPassword: [rules.required('كلمة المرور الجديدة'), rules.password(6)],
+      newPassword: [rules.required('كلمة المرور الجديدة'), rules.password()],
       confirmPassword: [
         rules.required('تأكيد كلمة المرور'),
         rules.matches('newPassword', 'كلمتا المرور غير متطابقتين.'),

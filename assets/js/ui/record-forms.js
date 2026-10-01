@@ -15,7 +15,7 @@
 
 import { esc } from '../utils/dom.js';
 import { toInputDate } from '../utils/format.js';
-import { rules } from '../utils/validators.js';
+import { rules, PASSWORD_MIN_LENGTH } from '../utils/validators.js';
 import {
   inputField,
   selectField,
@@ -704,7 +704,7 @@ export function campAdminFields(values = {}, { camps = [], isNew = true } = {}) 
               label: 'كلمة المرور المبدئية',
               value: '',
               required: true,
-              hint: '6 أحرف على الأقل، يغيّرها المسؤول بعد أول دخول.',
+              hint: `${PASSWORD_MIN_LENGTH} أحرف على الأقل، يغيّرها المسؤول بعد أول دخول.`,
               full: true,
             }),
           ]
@@ -891,7 +891,7 @@ export function campAdminSchema({ isNew = true, isDuplicateEmail = () => false }
     phone: [rules.required('رقم الجوال'), rules.phone('رقم الجوال')],
     campId: [rules.required('المخيم')],
     status: [rules.required('حالة الحساب')],
-    ...(isNew ? { password: [rules.required('كلمة المرور'), rules.password(6)] } : {}),
+    ...(isNew ? { password: [rules.required('كلمة المرور'), rules.password()] } : {}),
   };
 }
 

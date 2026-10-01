@@ -17,6 +17,9 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { errorResponse, jsonResponse } from '../_shared/http.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+// Keep in step with PASSWORD_MIN_LENGTH in assets/js/utils/validators.js.
+const PASSWORD_MIN_LENGTH = 8;
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NATIONAL_ID_RE = /^[0-9]{9}$/;
 const REFERENCE_CODE_RE = /^FAM-[0-9]{6,}$/i;
@@ -65,7 +68,9 @@ Deno.serve(async (req: Request) => {
   if (!NATIONAL_ID_RE.test(nationalId)) return errorResponse(400, 'validation', GENERIC_ACTIVATION_ERROR);
   if (!DATE_RE.test(birthDate)) return errorResponse(400, 'validation', GENERIC_ACTIVATION_ERROR);
   if (!EMAIL_RE.test(email)) return errorResponse(400, 'validation', 'البريد الإلكتروني غير صالح');
-  if (password.length < 6) return errorResponse(400, 'validation', 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return errorResponse(400, 'validation', `كلمة المرور يجب أن تكون ${PASSWORD_MIN_LENGTH} أحرف على الأقل`);
+  }
 
   const service = serviceClient();
 

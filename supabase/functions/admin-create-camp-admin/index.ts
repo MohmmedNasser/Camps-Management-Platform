@@ -18,6 +18,9 @@ import { errorResponse, jsonResponse } from '../_shared/http.ts';
 import { callerClient, callerUser } from '../_shared/supabase-client.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+// Keep in step with PASSWORD_MIN_LENGTH in assets/js/utils/validators.js.
+const PASSWORD_MIN_LENGTH = 8;
+
 const GENERIC_FORBIDDEN = 'لا تملك صلاحية إنشاء حساب مسؤول مخيم';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[0-9+\-\s]{6,20}$/;
@@ -80,7 +83,9 @@ Deno.serve(async (req: Request) => {
   if (fullName.length < 5) return errorResponse(400, 'validation', 'الاسم الكامل مطلوب (5 أحرف على الأقل)');
   if (!EMAIL_RE.test(email)) return errorResponse(400, 'validation', 'البريد الإلكتروني غير صالح');
   if (!PHONE_RE.test(phone)) return errorResponse(400, 'validation', 'رقم الجوال غير صالح');
-  if (password.length < 6) return errorResponse(400, 'validation', 'كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return errorResponse(400, 'validation', `كلمة المرور يجب أن تكون ${PASSWORD_MIN_LENGTH} أحرف على الأقل`);
+  }
   if (!UUID_RE.test(campId)) return errorResponse(400, 'validation', 'المخيم المحدد غير صالح');
   if (!VALID_STATUSES.includes(status)) return errorResponse(400, 'validation', 'حالة الحساب غير صالحة');
 
