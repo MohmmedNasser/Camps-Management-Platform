@@ -54,7 +54,7 @@ const statusOptions = (values) => values.map((value) => ({ value, label: STATUS_
  *        add-a-family form, where the person being described *is* the head.
  */
 export function displacedFields(values = {}, options = {}) {
-  const { camps = [], families = [], lockCamp = false, showFamily = true } = options;
+  const { camps = [], families = [], lockCamp = false, showFamily = true, lockEmail = false } = options;
 
   return [
     fieldset({
@@ -154,6 +154,10 @@ export function displacedFields(values = {}, options = {}) {
           value: values.email,
           optional: true,
           full: true,
+          ...(lockEmail && {
+            hint: 'هذا البريد هو بريد دخول حساب النازح ولا يمكن تغييره من هنا.',
+            attrs: 'disabled aria-readonly="true"',
+          }),
         }),
         selectField({
           name: 'governorate',

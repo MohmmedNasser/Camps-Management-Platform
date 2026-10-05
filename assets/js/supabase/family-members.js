@@ -113,6 +113,18 @@ export function listAllDisplaced(filters) {
 }
 
 /**
+ * Whether a login account is linked to this person (`profiles.family_member_id`).
+ * Their email is then the account's login email, which only the account owner's
+ * auth flow can change — so the file's email field is locked for them. RLS lets
+ * a Camp Admin read their own camp's profiles.
+ */
+export async function hasLinkedAccount(memberId) {
+  const client = requireClient();
+  const row = await run(client.from('profiles').select('id').eq('family_member_id', memberId).limit(1).maybeSingle());
+  return Boolean(row);
+}
+
+/**
  * One displaced person by id. Returns null for a nonexistent id or one RLS
  * hides (another camp) — both look identical from here, same convention as
  * `families.js`'s `getFamilyByReferenceCode()`.

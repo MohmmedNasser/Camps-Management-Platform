@@ -21,7 +21,7 @@ import { confirmDialog } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { pageUrl, go } from '../core/router.js';
 import { can } from '../core/auth.js';
-import { getDisplacedPerson, updateFamilyMember, removeFamilyMember, toFamilyMemberPayload, isDuplicateNationalId } from '../supabase/family-members.js';
+import { getDisplacedPerson, updateFamilyMember, removeFamilyMember, toFamilyMemberPayload, isDuplicateNationalId, hasLinkedAccount } from '../supabase/family-members.js';
 
 const shell = await mountShell({ active: 'displaced.html', title: 'تعديل بيانات نازح' });
 if (shell) init(shell);
@@ -45,7 +45,7 @@ async function init({ session, content }) {
       return;
     }
 
-    renderReal({ session, content, person });
+    renderReal({ session, content, person, emailLocked: await hasLinkedAccount(person.id) });
   } catch (error) {
     console.error(error);
     content.innerHTML = errorState({ retryAttrs: 'data-retry' });
@@ -73,7 +73,7 @@ async function loadReal(id, session) {
  * no automatic repair, so the field stays out of the real edit form; every
  * other field remains editable. */
 
-function renderReal({ session, content, person }) {
+function renderReal({ session, content, person, emailLocked }) {
   const camps = [{ value: session.campId, label: session.campLabel }];
 
   content.innerHTML = `
@@ -92,7 +92,7 @@ function renderReal({ session, content, person }) {
     ${formSummary([person.fullName, person.nationalId, person.familyId])}
 
     <form class="form" id="displaced-form" novalidate autocomplete="off">
-      ${displacedFields(person, { camps, lockCamp: true, showFamily: false })}
+      ${displacedFields(person, { camps, lockCamp: true, showFamily: false, lockEmail: emailLocked })}
       <div class="form-actions">
         ${button({
           label: 'إلغاء',
@@ -113,7 +113,11 @@ function renderReal({ session, content, person }) {
     schema: displacedSchema(),
     onSubmit: async (values) => {
       try {
-        await updateFamilyMember(person.id, toFamilyMemberPayload(values));
+        const payload = toFamilyMemberPayload(values);
+        // A disabled field is not submitted; leave the stored email untouched
+        // rather than letting it be written as null.
+        if (emailLocked) delete payload.email;
+        await updateFamilyMember(person.id, payload);
         toast.success('تم الحفظ', `تم تحديث بيانات ${values.fullName}.`);
         go('displaced-details.html', { id: person.id });
       } catch (error) {
