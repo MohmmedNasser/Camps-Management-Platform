@@ -283,9 +283,6 @@ export const PAGE_ACCESS = {
 /** Pagination default. */
 export const PAGE_SIZE = 10;
 
-/** Simulated network latency (ms) so skeleton states are real. */
-export const FAKE_LATENCY = 320;
-
 /** Chart palette, derived from the design system. */
 export const CHART_COLORS = [
   '#6366F1',

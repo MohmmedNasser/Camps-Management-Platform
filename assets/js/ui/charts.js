@@ -1,10 +1,11 @@
 /**
  * Chart.js wrappers.
  *
- * Chart.js is loaded from a CDN with a plain <script> tag on the pages that
- * need it. If it is unavailable (offline review, blocked CDN) every helper
- * degrades to the CSS `barList` component instead of leaving a blank card —
- * a dashboard that silently loses a panel is worse than a plainer one.
+ * Chart.js is loaded lazily from a CDN the first time a chart is actually
+ * drawn, so pages that never draw one (and the first paint of those that do)
+ * don't pay for it. If it is unavailable (offline review, blocked CDN) every
+ * helper degrades to the CSS `barList` component instead of leaving a blank
+ * card — a dashboard that silently loses a panel is worse than a plainer one.
  */
 
 import { esc } from '../utils/dom.js';
@@ -16,8 +17,31 @@ const FONT = "'Noto Sans Arabic', sans-serif";
 const GRID = '#E8E8EC';
 const TEXT = '#6B6B6B';
 
+const CHART_JS_SRC = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js';
+
 export function chartsAvailable() {
   return typeof window !== 'undefined' && typeof window.Chart !== 'undefined';
+}
+
+let chartJsPromise = null;
+
+/** Load Chart.js once; resolves true when `window.Chart` exists, false if the CDN failed. */
+function loadChartJs() {
+  if (chartsAvailable()) return Promise.resolve(true);
+  if (!chartJsPromise) {
+    chartJsPromise = new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = CHART_JS_SRC;
+      script.async = true;
+      script.onload = () => resolve(chartsAvailable());
+      script.onerror = () => {
+        chartJsPromise = null; // allow a retry on the next draw
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return chartJsPromise;
 }
 
 function baseOptions(extra = {}) {
@@ -100,15 +124,20 @@ function fallback(canvasId, items) {
   wrap.innerHTML = barList(items);
 }
 
-function create(canvasId, config, fallbackItems) {
+async function create(canvasId, config, fallbackItems, ariaLabel) {
+  if (!document.getElementById(canvasId)) return null;
+  const ready = await loadChartJs();
+  // Re-query: the page may have re-rendered while the script was loading.
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
-  if (!chartsAvailable()) {
+  if (!ready) {
     fallback(canvasId, fallbackItems);
     return null;
   }
   // eslint-disable-next-line no-undef
-  return new window.Chart(canvas, config);
+  const chart = new window.Chart(canvas, config);
+  canvas.setAttribute('aria-label', ariaLabel);
+  return chart;
 }
 
 /* ---- Chart builders ----------------------------------------------------- */
@@ -118,7 +147,7 @@ export function monthlyLine(canvasId, buckets, label = 'عدد النازحين'
   const labels = buckets.map((bucket) => formatMonth(bucket.date));
   const values = buckets.map((bucket) => bucket.value);
 
-  const chart = create(
+  return create(
     canvasId,
     {
       type: 'line',
@@ -143,16 +172,14 @@ export function monthlyLine(canvasId, buckets, label = 'عدد النازحين'
       },
       options: baseOptions({ scales: axisScales() }),
     },
-    buckets.map((bucket) => ({ label: formatMonth(bucket.date), value: bucket.value }))
+    buckets.map((bucket) => ({ label: formatMonth(bucket.date), value: bucket.value })),
+    `${label} خلال آخر ${buckets.length} أشهر`
   );
-
-  if (chart) chart.canvas.setAttribute('aria-label', `${label} خلال آخر ${buckets.length} أشهر`);
-  return chart;
 }
 
 /** Aid records by type (horizontal bar). */
 export function aidTypeBar(canvasId, rows) {
-  const chart = create(
+  return create(
     canvasId,
     {
       type: 'bar',
@@ -186,16 +213,14 @@ export function aidTypeBar(canvasId, rows) {
         },
       }),
     },
-    rows.map((row) => ({ label: row.label, value: row.count }))
+    rows.map((row) => ({ label: row.label, value: row.count })),
+    'توزيع المساعدات حسب النوع'
   );
-
-  if (chart) chart.canvas.setAttribute('aria-label', 'توزيع المساعدات حسب النوع');
-  return chart;
 }
 
 /** Gender split (doughnut). */
 export function genderDoughnut(canvasId, { males, females }) {
-  const chart = create(
+  return create(
     canvasId,
     {
       type: 'doughnut',
@@ -215,16 +240,14 @@ export function genderDoughnut(canvasId, { males, females }) {
     [
       { label: 'ذكور', value: males },
       { label: 'إناث', value: females },
-    ]
+    ],
+    `توزيع النازحين حسب الجنس: ${males} ذكور و${females} إناث`
   );
-
-  if (chart) chart.canvas.setAttribute('aria-label', `توزيع النازحين حسب الجنس: ${males} ذكور و${females} إناث`);
-  return chart;
 }
 
 /** Family size distribution (bar). */
 export function familySizeBar(canvasId, buckets) {
-  const chart = create(
+  return create(
     canvasId,
     {
       type: 'bar',
@@ -242,16 +265,14 @@ export function familySizeBar(canvasId, buckets) {
       },
       options: baseOptions({ scales: axisScales({ stepSize: 1 }) }),
     },
-    buckets.map((bucket) => ({ label: bucket.label, value: bucket.count, color: CHART_COLORS[1] }))
+    buckets.map((bucket) => ({ label: bucket.label, value: bucket.count, color: CHART_COLORS[1] })),
+    'توزيع الأسر حسب عدد الأفراد'
   );
-
-  if (chart) chart.canvas.setAttribute('aria-label', 'توزيع الأسر حسب عدد الأفراد');
-  return chart;
 }
 
 /** Per-camp comparison (grouped bar) — Super Admin. */
 export function campComparisonBar(canvasId, rows) {
-  const chart = create(
+  return create(
     canvasId,
     {
       type: 'bar',
@@ -274,9 +295,7 @@ export function campComparisonBar(canvasId, rows) {
       },
       options: baseOptions({ scales: axisScales({ stepSize: 2 }) }),
     },
-    rows.map((row) => ({ label: row.name, value: row.displacedCount }))
+    rows.map((row) => ({ label: row.name, value: row.displacedCount })),
+    'مقارنة المخيمات حسب عدد النازحين والأسر'
   );
-
-  if (chart) chart.canvas.setAttribute('aria-label', 'مقارنة المخيمات حسب عدد النازحين والأسر');
-  return chart;
 }
