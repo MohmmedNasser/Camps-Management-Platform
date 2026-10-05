@@ -165,18 +165,16 @@ function view(session, { message, camp, person, history }) {
         ${
           can('message:reply')
             ? card({
-                title: message.reply ? 'إرسال رد جديد' : 'الرد على الرسالة',
+                title: message.reply ? 'تعديل الرد' : 'الرد على الرسالة',
                 body: `
                   <form class="form" id="reply-form" novalidate autocomplete="off">
                     ${textareaField({
                       name: 'reply',
                       label: 'نص الرد',
-                      // Always empty: after a send the view re-renders, and the sent
-                      // reply is already shown in the thread above.
-                      value: '',
+                      value: message.reply || '',
                       required: true,
                       rows: 5,
-                      placeholder: message.reply ? 'اكتب رداً جديداً ليحل محل الرد السابق…' : 'اكتب رداً واضحاً ومختصراً…',
+                      placeholder: 'اكتب رداً واضحاً ومختصراً…',
                     })}
                     <div class="form-actions">
                       ${button({ label: 'إرسال الرد', variant: 'primary', iconName: 'send', type: 'submit' })}
