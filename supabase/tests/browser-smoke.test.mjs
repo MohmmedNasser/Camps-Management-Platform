@@ -2,8 +2,7 @@
  * Browser smoke test for the Phase 2 data-access layer.
  *
  * tests/phase2-business-logic.test.mjs exercises the RPCs and RLS directly
- * via the npm @supabase/supabase-js package, because Node cannot resolve
- * the `https://esm.sh/...` CDN import inside assets/js/core/supabase-client.js.
+ * via the npm @supabase/supabase-js package, outside any browser.
  * This test is the one place that actually loads the real
  * assets/js/supabase/*.js files, in a real browser, the way a page would.
  *

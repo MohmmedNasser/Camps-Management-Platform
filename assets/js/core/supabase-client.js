@@ -11,11 +11,12 @@
  * `createClient` themselves — several clients would mean several auth sessions
  * fighting over the same refresh token.
  *
- * No build step, so supabase-js is loaded as an ES module from a CDN, the same
- * way Chart.js already is.
+ * No build step, so supabase-js is a single pre-bundled ES module committed
+ * under assets/vendor/ (see supabase/scripts/vendor-supabase-js.mjs) rather
+ * than esm.sh's ~15-module tree on a third-party host.
  */
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.58.0';
+import { createClient } from '../../vendor/supabase-js.js';
 
 /* ---- Configuration ------------------------------------------------------ */
 
