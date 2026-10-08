@@ -3,8 +3,8 @@
 .env.*
 !.env.example
 
-# Generated from .env by `npm run frontend:config`. Contains a publishable key,
-# which is safe to expose in a browser, but is still project-specific.
+# Generated at build time from .env (locally) or from the Vercel project's
+# Environment Variables by supabase/scripts/write-frontend-config.mjs.
 assets/js/core/supabase-config.js
 
 # Backend tooling dependencies. The frontend prototype itself has none.

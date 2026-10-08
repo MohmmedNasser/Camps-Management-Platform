@@ -17,13 +17,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '../..');
 const TARGET = resolve(ROOT, 'assets/js/core/supabase-config.js');
 
-const env = parseEnv(resolve(ROOT, '.env'));
+// Locally the values come from .env; on Vercel (no .env file) they come from
+// the project's Environment Variables. A value in .env wins over the process.
+const env = { ...process.env, ...parseEnv(resolve(ROOT, '.env')) };
 
 const url = env.SUPABASE_URL;
 const key = env.SUPABASE_ANON_KEY || env.SUPABASE_PUBLISHABLE_KEY;
 
 if (!url || !key) {
-  fail('SUPABASE_URL and SUPABASE_ANON_KEY must both be set in .env');
+  fail('SUPABASE_URL and SUPABASE_ANON_KEY must both be set, in .env or as environment variables');
 }
 
 // A secret key in a browser file bypasses every RLS policy in the project.
@@ -60,7 +62,7 @@ function parseEnv(path) {
   try {
     contents = readFileSync(path, 'utf8');
   } catch {
-    fail(`No .env found at ${path}. Copy .env.example to .env first.`);
+    return result;
   }
   for (const line of contents.split(/\r?\n/)) {
     const match = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
