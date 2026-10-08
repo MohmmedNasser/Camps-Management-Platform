@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "node supabase/scripts/write-frontend-config.mjs",
+  "buildCommand": "node supabase/scripts/write-frontend-config.mjs && node supabase/scripts/bundle-css.mjs",
   "installCommand": "",
   "outputDirectory": ".",
   "redirects": [
