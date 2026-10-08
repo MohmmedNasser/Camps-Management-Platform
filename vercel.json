@@ -2,5 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "node supabase/scripts/write-frontend-config.mjs",
   "installCommand": "",
-  "outputDirectory": "."
+  "outputDirectory": ".",
+  "redirects": [
+    { "source": "/", "destination": "/pages/login.html", "permanent": false }
+  ]
 }
